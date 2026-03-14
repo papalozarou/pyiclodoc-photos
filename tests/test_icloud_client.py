@@ -5,6 +5,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
 
 from tests._stubs import install_dependency_stubs
@@ -13,6 +14,29 @@ install_dependency_stubs()
 
 from app.config import AppConfig
 from app.icloud_client import ICloudDriveClient
+
+
+# ------------------------------------------------------------------------------
+# This response stub yields byte chunks for client download tests.
+# ------------------------------------------------------------------------------
+class ChunkHandle:
+    def __init__(self, CHUNKS: list[bytes]):
+        self.chunks = CHUNKS
+
+    def iter_content(self, chunk_size: int):
+        _ = chunk_size
+        for CHUNK in self.chunks:
+            yield CHUNK
+
+
+# ------------------------------------------------------------------------------
+# This response stub raises during chunk reads to simulate interrupted IO.
+# ------------------------------------------------------------------------------
+class BrokenChunkHandle:
+    def iter_content(self, chunk_size: int):
+        _ = chunk_size
+        yield b"partial"
+        raise RuntimeError("stream failed")
 
 
 # ------------------------------------------------------------------------------
@@ -128,3 +152,75 @@ class TestIcloudClient(unittest.TestCase):
             all(PATH.startswith("library/2026/03/14/IMG_0001--") for PATH in PATHS)
         )
         self.assertTrue(all(NAME.endswith(".JPG") for NAME in DOWNLOAD_NAMES))
+
+# --------------------------------------------------------------------------
+# This test confirms successful downloads are written through a temporary file
+# and only the final destination remains afterwards.
+# --------------------------------------------------------------------------
+    def test_download_file_writes_atomically(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+            download=lambda: ChunkHandle([b"data"]),
+        )
+        CLIENT.api = SimpleNamespace(photos=SimpleNamespace(all=[ASSET], albums={}))
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOCAL_PATH = Path(TMPDIR) / "library/2026/03/14/IMG_0001.JPG"
+
+            self.assertTrue(CLIENT.download_file("library/2026/03/14/IMG_0001.JPG", LOCAL_PATH))
+            self.assertEqual(LOCAL_PATH.read_bytes(), b"data")
+            self.assertFalse((LOCAL_PATH.parent / ".IMG_0001.JPG.tmp").exists())
+
+# --------------------------------------------------------------------------
+# This test confirms unsupported download handles fail without leaving output.
+# --------------------------------------------------------------------------
+    def test_download_file_rejects_unsupported_handle_without_output(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+            download=lambda: object(),
+        )
+        CLIENT.api = SimpleNamespace(photos=SimpleNamespace(all=[ASSET], albums={}))
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOCAL_PATH = Path(TMPDIR) / "library/2026/03/14/IMG_0001.JPG"
+
+            self.assertFalse(CLIENT.download_file("library/2026/03/14/IMG_0001.JPG", LOCAL_PATH))
+            self.assertEqual(CLIENT.get_last_download_failure_reason(), "empty_download")
+            self.assertFalse(LOCAL_PATH.exists())
+            self.assertFalse((LOCAL_PATH.parent / ".IMG_0001.JPG.tmp").exists())
+
+# --------------------------------------------------------------------------
+# This test confirms interrupted downloads clean up temporary files and leave
+# any existing final destination untouched.
+# --------------------------------------------------------------------------
+    def test_download_file_cleans_up_failed_partial_downloads(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=10,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+            download=lambda: BrokenChunkHandle(),
+        )
+        CLIENT.api = SimpleNamespace(photos=SimpleNamespace(all=[ASSET], albums={}))
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOCAL_PATH = Path(TMPDIR) / "library/2026/03/14/IMG_0001.JPG"
+            LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+            LOCAL_PATH.write_bytes(b"existing")
+
+            self.assertFalse(CLIENT.download_file("library/2026/03/14/IMG_0001.JPG", LOCAL_PATH))
+            self.assertEqual(CLIENT.get_last_download_failure_reason(), "download_read_failed")
+            self.assertEqual(LOCAL_PATH.read_bytes(), b"existing")
+            self.assertFalse((LOCAL_PATH.parent / ".IMG_0001.JPG.tmp").exists())

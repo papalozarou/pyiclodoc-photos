@@ -21,6 +21,14 @@ FILE_NAME_SANITISE_PATTERN = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
 # ------------------------------------------------------------------------------
+# This exception signals that a download handle does not expose a supported
+# payload interface for this worker.
+# ------------------------------------------------------------------------------
+class UnsupportedDownloadHandleError(Exception):
+    pass
+
+
+# ------------------------------------------------------------------------------
 # This data class represents one remote photo asset and its derived backup
 # targets.
 # ------------------------------------------------------------------------------
@@ -325,8 +333,7 @@ class ICloudDriveClient:
 # 
 # Failure behaviour:
 # 1. Sets a short failure token on known error paths.
-# 2. Leaves partial local files to the surrounding filesystem semantics when a
-#    write fails mid-stream.
+# 2. Keeps the final destination untouched unless the full download succeeds.
 # --------------------------------------------------------------------------
     def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
         if self.api is None:
@@ -346,19 +353,99 @@ class ICloudDriveClient:
             return False
 
         LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TEMP_PATH = self._get_temporary_download_path(LOCAL_PATH)
+        EXPECTED_SIZE = self._asset_size(ASSET)
 
         try:
-            with LOCAL_PATH.open("wb") as HANDLE:
-                for CHUNK in self._iter_download_chunks(DOWNLOAD_HANDLE):
-                    if not CHUNK:
-                        continue
-                    HANDLE.write(CHUNK)
+            WRITTEN_BYTES = self._write_download_to_temp_file(DOWNLOAD_HANDLE, TEMP_PATH)
+            FAILURE_REASON = self._validate_download_size(WRITTEN_BYTES, EXPECTED_SIZE)
+
+            if FAILURE_REASON:
+                self._last_download_failure_reason = FAILURE_REASON
+                self._cleanup_download_temp_file(TEMP_PATH)
+                return False
+
+            TEMP_PATH.replace(LOCAL_PATH)
+        except UnsupportedDownloadHandleError:
+            self._last_download_failure_reason = "empty_download"
+            self._cleanup_download_temp_file(TEMP_PATH)
+            return False
         except OSError:
             self._last_download_failure_reason = "write_failed"
+            self._cleanup_download_temp_file(TEMP_PATH)
+            return False
+        except Exception:
+            self._last_download_failure_reason = "download_read_failed"
+            self._cleanup_download_temp_file(TEMP_PATH)
             return False
 
         self._last_download_failure_reason = ""
         return True
+
+# --------------------------------------------------------------------------
+# This function returns a temporary sibling path for an in-progress download.
+#
+# 1. "LOCAL_PATH" is the final canonical destination path.
+#
+# Returns: Temporary sibling path used until download success is confirmed.
+# --------------------------------------------------------------------------
+    def _get_temporary_download_path(self, LOCAL_PATH: Path) -> Path:
+        return LOCAL_PATH.with_name(f".{LOCAL_PATH.name}.tmp")
+
+# --------------------------------------------------------------------------
+# This function writes download content to a temporary file and counts bytes.
+#
+# 1. "DOWNLOAD_HANDLE" is a response-like object or byte payload.
+# 2. "TEMP_PATH" is the temporary output path.
+#
+# Returns: Total byte count written to the temporary file.
+# --------------------------------------------------------------------------
+    def _write_download_to_temp_file(self, DOWNLOAD_HANDLE: Any, TEMP_PATH: Path) -> int:
+        WRITTEN_BYTES = 0
+
+        self._cleanup_download_temp_file(TEMP_PATH)
+
+        with TEMP_PATH.open("wb") as HANDLE:
+            for CHUNK in self._iter_download_chunks(DOWNLOAD_HANDLE):
+                if not CHUNK:
+                    continue
+
+                HANDLE.write(CHUNK)
+                WRITTEN_BYTES += len(CHUNK)
+
+        return WRITTEN_BYTES
+
+# --------------------------------------------------------------------------
+# This function validates the written byte count against expected asset size.
+#
+# 1. "WRITTEN_BYTES" is the completed temporary-file byte count.
+# 2. "EXPECTED_SIZE" is the declared remote asset size.
+#
+# Returns: Failure reason token, or an empty string on success.
+# --------------------------------------------------------------------------
+    def _validate_download_size(self, WRITTEN_BYTES: int, EXPECTED_SIZE: int) -> str:
+        if WRITTEN_BYTES == 0:
+            return "empty_download"
+
+        if EXPECTED_SIZE > 0 and WRITTEN_BYTES != EXPECTED_SIZE:
+            return "incomplete_download"
+
+        return ""
+
+# --------------------------------------------------------------------------
+# This function removes a temporary download file when it exists.
+#
+# 1. "TEMP_PATH" is the temporary output path.
+#
+# Returns: None.
+# --------------------------------------------------------------------------
+    def _cleanup_download_temp_file(self, TEMP_PATH: Path) -> None:
+        try:
+            TEMP_PATH.unlink()
+        except FileNotFoundError:
+            return
+        except OSError:
+            return
 
 # --------------------------------------------------------------------------
 # This function keeps package-style transfer API compatibility.
@@ -829,7 +916,7 @@ class ICloudDriveClient:
 # 
 # Failure behaviour:
 # 1. Supports several response shapes used by pyicloud and requests objects.
-# 2. Sets a failure token only when no supported payload interface exists.
+# 2. Raises when no supported payload interface exists.
 # --------------------------------------------------------------------------
     def _iter_download_chunks(self, DOWNLOAD_HANDLE: Any):
         if isinstance(DOWNLOAD_HANDLE, bytes):
@@ -867,4 +954,4 @@ class ICloudDriveClient:
                 yield CHUNK
             return
 
-        self._last_download_failure_reason = "empty_download"
+        raise UnsupportedDownloadHandleError()
