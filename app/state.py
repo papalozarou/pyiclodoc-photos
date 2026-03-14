@@ -26,7 +26,9 @@ class AuthState:
 
 # ------------------------------------------------------------------------------
 # This function loads JSON content from disk with empty defaults.
-# 1. "path" is the JSON file path to read.
+#
+# 1. "PATH" is the JSON file path to read.
+#
 # Returns: Parsed dictionary payload, or an empty dictionary when absent.
 # ------------------------------------------------------------------------------
 def read_json(PATH: Path) -> dict[str, Any]:
@@ -39,10 +41,15 @@ def read_json(PATH: Path) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------------
 # This function writes JSON content atomically with a temp file.
-# 1. "path" is the destination JSON file.
-# 2. "payload" is the dictionary to persist.
-# Returns: "None".
-# Notes: Atomic replace avoids partial writes during interruption.
+#
+# 1. "PATH" is the destination JSON file.
+# 2. "PAYLOAD" is the dictionary to persist.
+#
+# Returns: None.
+#
+# N.B.
+# The worker writes to a sibling temporary file first, then replaces the final
+# file path so interrupted writes do not leave half-written state behind.
 # ------------------------------------------------------------------------------
 def write_json(PATH: Path, PAYLOAD: dict[str, Any]) -> None:
     TEMPORARY_PATH = PATH.with_suffix(PATH.suffix + ".tmp")
@@ -55,6 +62,7 @@ def write_json(PATH: Path, PAYLOAD: dict[str, Any]) -> None:
 
 # ------------------------------------------------------------------------------
 # This function returns a configured-timezone ISO-8601 timestamp.
+#
 # Returns: Offset-aware ISO-8601 timestamp string.
 # ------------------------------------------------------------------------------
 def now_iso() -> str:
@@ -63,8 +71,14 @@ def now_iso() -> str:
 
 # ------------------------------------------------------------------------------
 # This function loads persisted authentication state with robust defaults.
-# 1. "path" is the JSON state file location.
+#
+# 1. "PATH" is the JSON state file location.
+#
 # Returns: "AuthState" with default values when fields are missing.
+#
+# N.B.
+# Missing files and partial payloads are normal during first boot and after
+# manual cleanup, so this function must remain tolerant.
 # ------------------------------------------------------------------------------
 def load_auth_state(PATH: Path) -> AuthState:
     PAYLOAD = read_json(PATH)
@@ -80,8 +94,11 @@ def load_auth_state(PATH: Path) -> AuthState:
 
 # ------------------------------------------------------------------------------
 # This function persists authentication state to disk.
-# 1. "path" is the JSON state file location; "state" is the model to persist.
-# Returns: "None".
+#
+# 1. "PATH" is the JSON state file location.
+# 2. "STATE" is the model to persist.
+#
+# Returns: None.
 # ------------------------------------------------------------------------------
 def save_auth_state(PATH: Path, STATE: AuthState) -> None:
     PAYLOAD = {
@@ -95,8 +112,14 @@ def save_auth_state(PATH: Path, STATE: AuthState) -> None:
 
 # ------------------------------------------------------------------------------
 # This function loads a manifest that tracks remote file metadata by path.
-# 1. "path" is the manifest file location.
+#
+# 1. "PATH" is the manifest file location.
+#
 # Returns: Mapping keyed by remote path for incremental diff checks.
+#
+# N.B.
+# Non-dictionary payloads are treated as invalid state and collapsed to an
+# empty manifest so the worker can rebuild safely on the next sync run.
 # ------------------------------------------------------------------------------
 def load_manifest(PATH: Path) -> dict[str, dict[str, Any]]:
     PAYLOAD = read_json(PATH)
@@ -111,9 +134,11 @@ def load_manifest(PATH: Path) -> dict[str, dict[str, Any]]:
 
 # ------------------------------------------------------------------------------
 # This function saves the manifest in stable ordering.
-# 1. "path" is the manifest file location.
-# 2. "manifest" is the payload to persist.
-# Returns: "None".
+#
+# 1. "PATH" is the manifest file location.
+# 2. "MANIFEST" is the payload to persist.
+#
+# Returns: None.
 # ------------------------------------------------------------------------------
 def save_manifest(PATH: Path, MANIFEST: dict[str, dict[str, Any]]) -> None:
     write_json(PATH, MANIFEST)

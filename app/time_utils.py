@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ------------------------------------------------------------------------------
 # This function returns timezone from "TZ", falling back to UTC.
+#
 # Returns: A valid timezone object resolved from IANA zone data.
+#
+# N.B.
+# Invalid zone names do not fail worker startup. The runtime falls back to UTC
+# so scheduling and log timestamps stay deterministic.
+#
 # Notes: ZoneInfo behaviour follows Python standard library guidance:
 # https://docs.python.org/3/library/zoneinfo.html
 # ------------------------------------------------------------------------------
@@ -28,6 +34,7 @@ def configured_timezone() -> tzinfo:
 
 # ------------------------------------------------------------------------------
 # This function returns the current time in the configured timezone.
+#
 # Returns: Offset-aware "datetime" in the configured timezone.
 # ------------------------------------------------------------------------------
 def now_local() -> datetime:
@@ -36,6 +43,7 @@ def now_local() -> datetime:
 
 # ------------------------------------------------------------------------------
 # This function returns a configured-timezone ISO-8601 timestamp.
+#
 # Returns: Offset-aware ISO-8601 timestamp string.
 # ------------------------------------------------------------------------------
 def now_local_iso() -> str:

@@ -38,6 +38,10 @@ class RemoteEntry:
 
 # ------------------------------------------------------------------------------
 # This class encapsulates iCloud auth, photo listing, and asset downloads.
+# 
+# N.B.
+# The class name is retained for compatibility with the existing template and
+# surrounding runtime code, even though this implementation targets Photos.
 # ------------------------------------------------------------------------------
 class ICloudDriveClient:
 # --------------------------------------------------------------------------
@@ -46,6 +50,10 @@ class ICloudDriveClient:
 # 1. "CONFIG" is the runtime configuration model used by this client.
 #
 # Returns: None.
+# 
+# N.B.
+# The client keeps the last download failure reason as a short token so the
+# sync layer can log concise diagnostics across worker threads.
 # --------------------------------------------------------------------------
     def __init__(self, CONFIG: AppConfig):
         self.config = CONFIG
@@ -57,6 +65,10 @@ class ICloudDriveClient:
 # icloudpd-compatible folder layout.
 #
 # Returns: None.
+# 
+# N.B.
+# The compat links make it practical to reuse persistent auth artefacts from
+# other pyicloud-based tooling without copying cookie trees by hand.
 # --------------------------------------------------------------------------
     def prepare_compat_paths(self) -> None:
         self.config.icloudpd_compat_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +82,10 @@ class ICloudDriveClient:
 # 2. "TARGET_PATH" is the canonical storage directory.
 #
 # Returns: None.
+# 
+# N.B.
+# Existing non-symlink paths are removed deliberately because mixed real
+# directories and symlinks in the compat tree are harder to debug.
 # --------------------------------------------------------------------------
     def _ensure_link(self, LINK_PATH: Path, TARGET_PATH: Path) -> None:
         if LINK_PATH.is_symlink():
@@ -167,6 +183,10 @@ class ICloudDriveClient:
 # This function lists remote photo assets as canonical backup entries.
 #
 # Returns: Flat list of photo entries.
+# 
+# N.B.
+# Album membership is derived separately from the canonical photo listing so
+# the worker can keep one primary copy per asset.
 # --------------------------------------------------------------------------
     def list_entries(self) -> list[RemoteEntry]:
         if self.api is None:
@@ -190,6 +210,11 @@ class ICloudDriveClient:
 # 2. "LOCAL_PATH" is the full destination file path.
 #
 # Returns: True on success, otherwise False.
+# 
+# Failure behaviour:
+# 1. Sets a short failure token on known error paths.
+# 2. Leaves partial local files to the surrounding filesystem semantics when a
+#    write fails mid-stream.
 # --------------------------------------------------------------------------
     def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
         if self.api is None:
@@ -257,6 +282,10 @@ class ICloudDriveClient:
 # This function returns all assets from the main photos collection.
 #
 # Returns: List of remote asset objects.
+# 
+# N.B.
+# Pyicloud Photos collection names vary across versions, so the lookup tries
+# several common collection entry points before giving up.
 # --------------------------------------------------------------------------
     def _read_all_assets(self) -> list[Any]:
         PHOTOS = self._get_photos_service()
@@ -275,6 +304,10 @@ class ICloudDriveClient:
 # This function returns derived album membership keyed by asset identifier.
 #
 # Returns: Mapping from asset identifier to sanitised album-path tuple.
+# 
+# N.B.
+# Album membership is reduced to relative output paths here so the sync layer
+# does not need to understand pyicloud album objects directly.
 # --------------------------------------------------------------------------
     def _read_album_membership(self) -> dict[str, tuple[str, ...]]:
         PHOTOS = self._get_photos_service()
@@ -308,6 +341,10 @@ class ICloudDriveClient:
 # 3. "ALBUM_MAP" maps asset IDs to album output paths.
 #
 # Returns: Normalised "RemoteEntry" for sync planning.
+# 
+# Behaviour notes:
+# 1. The canonical path is always built under the configured library root.
+# 2. Album paths are attached as derived metadata only.
 # --------------------------------------------------------------------------
     def _build_remote_entry(
         self,
@@ -356,6 +393,10 @@ class ICloudDriveClient:
 # 1. "ALBUMS" is a pyicloud album container or dictionary.
 #
 # Returns: Dictionary keyed by album name.
+# 
+# N.B.
+# Some pyicloud versions expose dict-like album containers rather than plain
+# dictionaries, so this function flattens those interfaces early.
 # --------------------------------------------------------------------------
     def _normalise_album_mapping(self, ALBUMS: Any) -> dict[str, Any]:
         if isinstance(ALBUMS, dict):
@@ -375,6 +416,10 @@ class ICloudDriveClient:
 # 1. "SOURCE" is an asset collection object.
 #
 # Returns: List of asset objects.
+# 
+# N.B.
+# The function intentionally swallows type mismatches because the caller uses
+# an empty list as the uniform "not available" contract.
 # --------------------------------------------------------------------------
     def _materialise_assets(self, SOURCE: Any) -> list[Any]:
         if SOURCE is None:
@@ -397,6 +442,10 @@ class ICloudDriveClient:
 # 1. "ALBUM_NAME" is the raw remote album name.
 #
 # Returns: True when album output should be generated.
+# 
+# N.B.
+# "All Photos" is excluded because the canonical library tree already covers
+# the full asset set and a duplicate album tree would add no value.
 # --------------------------------------------------------------------------
     def _should_include_album(self, ALBUM_NAME: str) -> bool:
         CLEAN_NAME = ALBUM_NAME.strip()
@@ -425,6 +474,10 @@ class ICloudDriveClient:
 # 2. "INDEX" is fallback counter when no obvious asset identifier exists.
 #
 # Returns: Stable identifier string.
+# 
+# N.B.
+# When pyicloud does not expose a durable remote identifier, the fallback hash
+# is only intended to keep one local run stable enough for manifesting.
 # --------------------------------------------------------------------------
     def _asset_identifier(self, ASSET: Any, INDEX: int) -> str:
         for ATTRIBUTE in ("id", "photo_guid", "guid", "record_name", "recordName"):
@@ -449,6 +502,10 @@ class ICloudDriveClient:
 # 2. "ASSET_ID" is the stable asset identifier.
 #
 # Returns: Sanitised filename.
+# 
+# N.B.
+# The fallback name keeps a common image suffix so exported files remain easy
+# to inspect even when the remote metadata is sparse.
 # --------------------------------------------------------------------------
     def _asset_file_name(self, ASSET: Any, ASSET_ID: str) -> str:
         for ATTRIBUTE in ("filename", "name"):
@@ -465,6 +522,10 @@ class ICloudDriveClient:
 # 1. "NAME" is the source filename.
 #
 # Returns: Safe filename string.
+# 
+# N.B.
+# This sanitiser is intentionally conservative and filesystem-oriented. It does
+# not try to preserve every original Unicode code point.
 # --------------------------------------------------------------------------
     def _sanitize_file_name(self, NAME: str) -> str:
         CLEAN_NAME = FILE_NAME_SANITISE_PATTERN.sub("_", NAME).strip(" .")
@@ -602,6 +663,10 @@ class ICloudDriveClient:
 # 1. "REMOTE_PATH" is the canonical output path generated by this worker.
 #
 # Returns: Asset object when found, otherwise None.
+# 
+# N.B.
+# This is a linear lookup over the current remote asset list. That is
+# acceptable for now because it keeps the client logic simple.
 # --------------------------------------------------------------------------
     def _get_asset_by_remote_path(self, REMOTE_PATH: str) -> Any | None:
         for INDEX, ASSET in enumerate(self._read_all_assets(), start=1):
@@ -618,6 +683,10 @@ class ICloudDriveClient:
 # 1. "ASSET" is the pyicloud asset object.
 #
 # Returns: Download handle or response object, otherwise None.
+# 
+# N.B.
+# Pyicloud response methods are inconsistent across versions, so this probes a
+# few common call shapes before declaring the asset undownloadable.
 # --------------------------------------------------------------------------
     def _open_asset_download(self, ASSET: Any) -> Any | None:
         for METHOD_NAME in ("download", "open", "download_original"):
@@ -643,6 +712,10 @@ class ICloudDriveClient:
 # 1. "DOWNLOAD_HANDLE" is a response-like object or byte payload.
 #
 # Returns: Iterator of byte chunks.
+# 
+# Failure behaviour:
+# 1. Supports several response shapes used by pyicloud and requests objects.
+# 2. Sets a failure token only when no supported payload interface exists.
 # --------------------------------------------------------------------------
     def _iter_download_chunks(self, DOWNLOAD_HANDLE: Any):
         if isinstance(DOWNLOAD_HANDLE, bytes):
@@ -681,4 +754,3 @@ class ICloudDriveClient:
             return
 
         self._last_download_failure_reason = "empty_download"
-

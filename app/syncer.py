@@ -1,6 +1,10 @@
 # ------------------------------------------------------------------------------
 # This module performs incremental iCloud Photos synchronisation with manifest,
 # album-link, and safety-net logic.
+# 
+# The sync model keeps one canonical file path per asset and treats album views
+# as derived outputs. That separation keeps deletion and reimport decisions
+# easier to reason about.
 # ------------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -48,6 +52,10 @@ class SyncResult:
 # This function derives automatic transfer worker count from host CPU capacity.
 #
 # Returns: Bounded worker count for concurrent file download tasks.
+# 
+# N.B.
+# The upper bound is deliberately conservative because photo downloads are more
+# likely to be network-bound than CPU-bound.
 # ------------------------------------------------------------------------------
 def get_auto_worker_count() -> int:
     CPU_COUNT = os.cpu_count() or 1
@@ -76,6 +84,10 @@ def get_transfer_worker_count(SYNC_DOWNLOAD_WORKERS: int) -> int:
 # 2. "SAMPLE_SIZE" is the max number of files to inspect.
 #
 # Returns: "SafetyNetResult" describing whether sync should be blocked and why.
+# 
+# N.B.
+# This check is intentionally bounded. It is designed to catch the common
+# "wrong UID/GID against existing files" case before a damaging run.
 # ------------------------------------------------------------------------------
 def run_first_time_safety_net(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> SafetyNetResult:
     LOCAL_FILES = collect_local_files(OUTPUT_DIR, SAMPLE_SIZE)
@@ -96,6 +108,10 @@ def run_first_time_safety_net(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> SafetyNetRe
 # 2. "SAMPLE_SIZE" is the sample cap.
 #
 # Returns: Ordered file list up to "SAMPLE_SIZE" for ownership analysis.
+# 
+# N.B.
+# The sample uses filesystem walk order. It does not try to be statistically
+# representative; it only needs to surface obvious ownership mismatches.
 # ------------------------------------------------------------------------------
 def collect_local_files(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> list[Path]:
     RESULT: list[Path] = []
@@ -121,6 +137,10 @@ def collect_local_files(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> list[Path]:
 # 4. "LIMIT" caps mismatch output.
 #
 # Returns: Human-readable mismatch list for logs and Telegram alerts.
+# 
+# Failure behaviour:
+# 1. Stops after "LIMIT" mismatches to keep alerts compact.
+# 2. Leaves deeper filesystem inspection to the operator after the block.
 # ------------------------------------------------------------------------------
 def collect_mismatches(
     FILES: list[Path],
@@ -153,6 +173,10 @@ def collect_mismatches(
 # 1. "ENTRY" is a remote photo metadata record.
 #
 # Returns: Dictionary payload persisted in the incremental manifest.
+# 
+# N.B.
+# Album paths are stored in the canonical entry metadata so derived album views
+# can be recreated without re-reading remote album membership during deletes.
 # ------------------------------------------------------------------------------
 def entry_metadata(ENTRY: RemoteEntry) -> dict[str, Any]:
     return {
@@ -200,6 +224,11 @@ def needs_transfer(ENTRY: RemoteEntry, MANIFEST: dict[str, dict[str, Any]]) -> b
 # 3. "MANIFEST" is previous metadata.
 #
 # Returns: Tuple of sync summary metrics and a refreshed manifest mapping.
+# 
+# Behaviour notes:
+# 1. Only canonical library files participate in transfer decisions.
+# 2. Album views are reconciled after canonical transfers complete.
+# 3. Optional delete handling removes both canonical and derived local paths.
 # ------------------------------------------------------------------------------
 def perform_incremental_sync(
     CLIENT: ICloudDriveClient,
@@ -276,6 +305,10 @@ def perform_incremental_sync(
 # 6. "WORKER_COUNT" is the bounded transfer pool size.
 #
 # Returns: Tuple "(transferred, transferred_bytes, errors)".
+# 
+# N.B.
+# Transfer workers only touch canonical file paths. Album views are rebuilt in
+# a later serial phase so link creation never races a file download.
 # ------------------------------------------------------------------------------
 def run_transfers(
     CLIENT: ICloudDriveClient,
@@ -369,6 +402,10 @@ def run_transfers(
 # 3. "ENTRY" is the remote photo metadata record.
 #
 # Returns: True on successful file transfer, otherwise False.
+# 
+# N.B.
+# The sync layer delegates all remote-open behaviour to the client so retry and
+# response-shape complexity stays in one place.
 # ------------------------------------------------------------------------------
 def transfer_if_required(
     CLIENT: ICloudDriveClient,
@@ -385,6 +422,10 @@ def transfer_if_required(
 # 2. "MODIFIED" is an ISO-like timestamp.
 #
 # Returns: None.
+# 
+# N.B.
+# Invalid or missing timestamps are ignored rather than treated as sync
+# failures because the file content itself has already been written.
 # ------------------------------------------------------------------------------
 def apply_remote_modified_time(LOCAL_PATH: Path, MODIFIED: str) -> None:
     try:
@@ -405,6 +446,10 @@ def apply_remote_modified_time(LOCAL_PATH: Path, MODIFIED: str) -> None:
 # 4. "LOG_FILE" is optional log file path.
 #
 # Returns: None.
+# 
+# N.B.
+# Album view creation is intentionally best-effort. Missing canonical files are
+# skipped quietly because a failed canonical transfer has already been counted.
 # ------------------------------------------------------------------------------
 def reconcile_album_views(
     OUTPUT_DIR: Path,
@@ -447,6 +492,10 @@ def reconcile_album_views(
 # 2. "TARGET_PATH" is the album-view file path.
 #
 # Returns: None.
+# 
+# N.B.
+# Hard links are preferred because they avoid duplicate data. Copy fallback is
+# retained for filesystems and bind mounts that do not permit linking.
 # ------------------------------------------------------------------------------
 def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> None:
     TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -471,6 +520,10 @@ def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> None:
 # 2. "RIGHT_PATH" is the second path.
 #
 # Returns: True when both paths already represent the same file data.
+# 
+# N.B.
+# The byte-compare fallback is more expensive than inode checks, but it only
+# runs when the platform cannot confirm file identity cheaply.
 # ------------------------------------------------------------------------------
 def same_file_contents(LEFT_PATH: Path, RIGHT_PATH: Path) -> bool:
     try:
@@ -494,6 +547,10 @@ def same_file_contents(LEFT_PATH: Path, RIGHT_PATH: Path) -> bool:
 # 4. "LOG_FILE" is optional log file path.
 #
 # Returns: None.
+# 
+# N.B.
+# Delete handling is filesystem-driven. The manifest is updated
+# opportunistically so a future run can still self-heal if one unlink fails.
 # ------------------------------------------------------------------------------
 def delete_removed_local_paths(
     OUTPUT_DIR: Path,
@@ -533,6 +590,10 @@ def delete_removed_local_paths(
 # 1. "ENTRIES" is the current remote photo list.
 #
 # Returns: Set of canonical and album-view paths.
+# 
+# N.B.
+# Derived album-view paths are included here so delete handling remains
+# independent from the layout chosen during the previous run.
 # ------------------------------------------------------------------------------
 def desired_relative_paths(ENTRIES: list[RemoteEntry]) -> set[str]:
     RESULT: set[str] = set()
@@ -552,6 +613,10 @@ def desired_relative_paths(ENTRIES: list[RemoteEntry]) -> set[str]:
 # 1. "OUTPUT_DIR" is local backup root.
 #
 # Returns: None.
+# 
+# N.B.
+# Directories are pruned deepest-first so parents are only considered after any
+# removable children have already been handled.
 # ------------------------------------------------------------------------------
 def prune_empty_directories(OUTPUT_DIR: Path) -> None:
     DIRECTORIES = [PATH for PATH in OUTPUT_DIR.rglob("*") if PATH.is_dir()]

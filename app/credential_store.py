@@ -14,9 +14,14 @@ from keyrings.alt.file import PlaintextKeyring
 
 # ------------------------------------------------------------------------------
 # This function configures a deterministic file-based keyring path.
-# 1. "config_dir" is the root directory used for worker runtime state.
-# Returns: "None".
-# Notes: File keyring keeps credentials in mounted container volumes.
+#
+# 1. "CONFIG_DIR" is the root directory used for worker runtime state.
+#
+# Returns: None.
+#
+# N.B.
+# This worker intentionally uses a file-backed keyring inside mounted storage
+# so Apple credentials survive container restarts and reauth windows.
 # ------------------------------------------------------------------------------
 def configure_keyring(CONFIG_DIR: Path) -> None:
     KEYRING_DIR = CONFIG_DIR / "keyring"
@@ -33,8 +38,10 @@ def configure_keyring(CONFIG_DIR: Path) -> None:
 
 # ------------------------------------------------------------------------------
 # This function reads credentials from keyring storage.
-# 1. "service_name" scopes credentials.
-# 2. "username" identifies the account key prefix.
+#
+# 1. "SERVICE_NAME" scopes credentials for this application.
+# 2. "USERNAME" identifies the account key prefix inside the keyring.
+#
 # Returns: Tuple "(email, password)" with empty-string fallbacks.
 # ------------------------------------------------------------------------------
 def load_credentials(SERVICE_NAME: str, USERNAME: str) -> tuple[str, str]:
@@ -45,10 +52,17 @@ def load_credentials(SERVICE_NAME: str, USERNAME: str) -> tuple[str, str]:
 
 # ------------------------------------------------------------------------------
 # This function writes credentials to keyring storage when values are available.
-# 1. "service_name" scopes credentials.
-# 2. "username" identifies keys.
-# 3. "email" and "password" are values to store.
-# Returns: "None".
+#
+# 1. "SERVICE_NAME" scopes credentials for this application.
+# 2. "USERNAME" identifies the account key prefix inside the keyring.
+# 3. "EMAIL" is the Apple ID email to persist when non-empty.
+# 4. "PASSWORD" is the Apple ID password to persist when non-empty.
+#
+# Returns: None.
+#
+# N.B.
+# Empty values are ignored so transient config gaps do not wipe previously
+# stored credentials.
 # ------------------------------------------------------------------------------
 def save_credentials(
     SERVICE_NAME: str,

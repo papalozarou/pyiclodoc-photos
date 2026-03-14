@@ -50,6 +50,10 @@ def get_endpoint(TOKEN: str, METHOD: str) -> str:
 #
 # Returns: True on successful HTTP/API response, otherwise False.
 #
+# N.B.
+# Missing bot token or chat ID is treated as integration-disabled state rather
+# than a fatal error, because Telegram is optional for local development.
+#
 # Notes: Telegram Bot API reference:
 # https://core.telegram.org/bots/api#sendmessage
 # ------------------------------------------------------------------------------
@@ -85,6 +89,10 @@ def send_message(CONFIG: TelegramConfig, TEXT: str, TIMEOUT: int = 20) -> bool:
 # 3. "TIMEOUT" is long-poll timeout in seconds.
 #
 # Returns: List of update dictionaries from Telegram, or empty list on errors.
+#
+# N.B.
+# All network and API failures collapse to an empty update list so the command
+# poll loop can keep running without forcing a worker restart.
 #
 # Notes: Telegram Bot API reference:
 # https://core.telegram.org/bots/api#getupdates
@@ -131,6 +139,10 @@ def fetch_updates(
 # 3. "EXPECTED_CHAT_ID" restricts accepted chats.
 #
 # Returns: Parsed "CommandEvent" when valid, otherwise None.
+#
+# N.B.
+# Command parsing is intentionally strict. Only the configured chat ID and the
+# exact "<username> <command>" prefix are accepted.
 #
 # Notes: Update payload structure follows Telegram Bot API documentation:
 # https://core.telegram.org/bots/api#update

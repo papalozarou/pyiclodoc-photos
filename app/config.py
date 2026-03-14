@@ -68,6 +68,10 @@ def env_value(NAME: str, DEFAULT: str = "") -> str:
 # 2. "DEFAULT" is used when parsing fails.
 #
 # The function returns the parsed integer or fallback default.
+# 
+# N.B.
+# Invalid numeric input is treated as unset so container startup can surface
+# validation failures centrally instead of scattering parse exceptions here.
 # ------------------------------------------------------------------------------
 def env_int(NAME: str, DEFAULT: int) -> int:
     RAW_VALUE = env_value(NAME, str(DEFAULT))
@@ -85,6 +89,10 @@ def env_int(NAME: str, DEFAULT: int) -> int:
 # 2. "DEFAULT" is used when the value is unset or invalid.
 #
 # The function returns 0 for "auto" mode, otherwise a positive integer.
+# 
+# N.B.
+# This parser preserves the template contract where "auto" is represented as
+# zero and resolved later by the sync layer.
 # ------------------------------------------------------------------------------
 def env_workers(NAME: str, DEFAULT: int = 0) -> int:
     RAW_VALUE = env_value(NAME, "auto").lower()
@@ -107,6 +115,10 @@ def env_workers(NAME: str, DEFAULT: int = 0) -> int:
 # 2. "DEFAULT" is used when the value is unset or unrecognised.
 #
 # The function returns parsed boolean intent from common true/false tokens.
+# 
+# N.B.
+# Unknown values fall back to the supplied default so environment mistakes do
+# not silently flip behaviour in the opposite direction.
 # ------------------------------------------------------------------------------
 def env_bool(NAME: str, DEFAULT: bool) -> bool:
     RAW_VALUE = env_value(NAME).lower()
@@ -134,6 +146,10 @@ def ensure_dir(PATH: Path) -> Path:
 
 # ------------------------------------------------------------------------------
 # This function builds the immutable runtime configuration object.
+#
+# 1. Reads host and container env values.
+# 2. Creates runtime directories required before worker startup.
+# 3. Returns one frozen configuration object used across the process.
 #
 # N.B.
 # Docker env and secrets conventions are documented at:
