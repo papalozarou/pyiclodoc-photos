@@ -1,8 +1,17 @@
 # ------------------------------------------------------------------------------
 # This Compose example defines two isolated iCloud Photos backup workers.
+# 
+# The file keeps shared runtime values in extension blocks and gives each
+# worker its own config, output, log, and secret wiring.
 # ------------------------------------------------------------------------------
 name: pyiclodoc-photos
 
+# ------------------------------------------------------------------------------
+# Define shared environment values used by all worker services.
+#
+# 1. Timezone, UID, and GID keep scheduling and file ownership consistent.
+# 2. Log settings are shared so both services rotate logs the same way.
+# ------------------------------------------------------------------------------
 x-env:
   &default-env
   TZ: ${H_TZ}
@@ -13,6 +22,13 @@ x-env:
   LOG_ROTATE_MAX_MIB: ${C_LOG_ROTATE_MAX_MIB}
   LOG_ROTATE_KEEP_DAYS: ${C_LOG_ROTATE_KEEP_DAYS}
 
+# ------------------------------------------------------------------------------
+# Define shared security settings used by all worker services.
+#
+# 1. All Linux capabilities are dropped by default.
+# 2. Only "SETUID" and "SETGID" are re-added so the entrypoint can drop from
+#    root to the configured runtime UID and GID after reading secrets.
+# ------------------------------------------------------------------------------
 x-security:
   &default-security
   cap_drop:
@@ -21,6 +37,12 @@ x-security:
     - SETUID
     - SETGID
 
+# ------------------------------------------------------------------------------
+# Define Docker secret mappings consumed by the example services.
+#
+# 1. The Telegram bot token is shared between both worker services.
+# 2. Each worker keeps its own iCloud email and password secrets.
+# ------------------------------------------------------------------------------
 secrets:
   telegram_bot_token:
     file: ${H_DKR_SECRETS}/telegram_bot_token.txt
@@ -37,6 +59,9 @@ services:
 # ------------------------------------------------------------------------------
 # Service "icloud_photos_alice" runs the worker with isolated Alice state
 # paths.
+# 
+# This service reads Alice-specific env values from ".env.example" and stores
+# runtime state under "${ALICE_*}" host paths.
 # ------------------------------------------------------------------------------
   icloud_photos_alice:
     image: "${IMG_NAME}:alpine-${ALP_VER}"
@@ -83,6 +108,9 @@ services:
 
 # ------------------------------------------------------------------------------
 # Service "icloud_photos_bob" runs the worker with isolated Bob state paths.
+# 
+# This service mirrors the Alice example so the project can run more than one
+# isolated worker in the same Compose project.
 # ------------------------------------------------------------------------------
   icloud_photos_bob:
     image: "${IMG_NAME}:alpine-${ALP_VER}"
