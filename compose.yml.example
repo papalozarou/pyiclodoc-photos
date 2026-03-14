@@ -1,7 +1,7 @@
 # ------------------------------------------------------------------------------
 # This Compose example defines two isolated iCloud Photos backup workers.
 # ------------------------------------------------------------------------------
-name: pyiclodoc-photos-docker
+name: pyiclodoc-photos
 
 x-env:
   &default-env
