@@ -70,6 +70,24 @@ Current message templates include:
 - `*⚠️ PCD Photos - Safety net blocked*`
 - `*📣 PCD Photos - Reauth reminder*`
 
+Authentication-required messages can include:
+
+- `Send: <username> auth 123456`
+- `Or: <username> reauth 123456`
+- `One-shot mode is waiting for an auth command before backup.`
+- `Wait window: 15 mins.`
+
+Reauthentication-required messages can include:
+
+- `Reauthentication is due within two days.`
+- `Send: <username> reauth`
+- `Reauthentication required for Apple ID <apple-id>.`
+- `Send: <username> reauth 123456`
+
+Reauth reminder messages use this text:
+
+- `Reauthentication will be required within five days.`
+
 Backup completion messages include:
 
 - `Transferred: <done>/<total>`
@@ -80,9 +98,29 @@ Backup completion messages include:
 
 Backup start messages include:
 
+- `Photos downloading for Apple ID <apple-id>.`
 - `Scheduled <plain English schedule>`
 - `Manual, then <plain English schedule>`
+- `One-shot run – configured schedule is ignored.`
+
+Backup requested messages include:
+
+- `Manual backup requested for Apple ID <apple-id>.`
+- `Worker queued backup to run now.`
+
+Backup skipped messages include:
+
+- `Backup skipped for Apple ID <apple-id>.`
+- `Reason: Authentication incomplete.`
+- `Reason: Reauthentication pending.`
 
 Safety-net blocked messages include an explicit expected ownership line:
 
 - `Expected: uid <uid>, gid <gid>`
+
+Container lifecycle messages can include:
+
+- `Worker started for Apple ID <apple-id>.`
+- `Initialising authentication and backup checks.`
+- `Worker stopped for Apple ID <apple-id>.`
+- `<stop-status>`
