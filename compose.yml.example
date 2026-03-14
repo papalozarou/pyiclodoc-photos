@@ -55,6 +55,13 @@ secrets:
   bob_icloud_password:
     file: ${H_DKR_SECRETS}/bob_icloud_password.txt
 
+# ------------------------------------------------------------------------------
+# Define backup worker services.
+#
+# Each service keeps state in host paths configured through ".env.example".
+# Shared host values use "H_" variables and service values use "ALICE_*" and
+# "BOB_*" variables loaded from ".env.example".
+# ------------------------------------------------------------------------------
 services:
 # ------------------------------------------------------------------------------
 # Service "icloud_photos_alice" runs the worker with isolated Alice state
@@ -76,7 +83,6 @@ services:
       - telegram_bot_token
       - alice_icloud_email
       - alice_icloud_password
-    <<: *default-security
     environment:
       <<: *default-env
       CONTAINER_USERNAME: "alice"
@@ -104,6 +110,7 @@ services:
       - ${ALICE_CONFIG_PATH}:/config
       - ${ALICE_OUTPUT_PATH}:/output
       - ${ALICE_LOGS_PATH}:/logs
+    <<: *default-security
     restart: "${ALICE_RESTART_POLICY}"
 
 # ------------------------------------------------------------------------------
@@ -125,7 +132,6 @@ services:
       - telegram_bot_token
       - bob_icloud_email
       - bob_icloud_password
-    <<: *default-security
     environment:
       <<: *default-env
       CONTAINER_USERNAME: "bob"
@@ -153,4 +159,5 @@ services:
       - ${BOB_CONFIG_PATH}:/config
       - ${BOB_OUTPUT_PATH}:/output
       - ${BOB_LOGS_PATH}:/logs
+    <<: *default-security
     restart: "${BOB_RESTART_POLICY}"
