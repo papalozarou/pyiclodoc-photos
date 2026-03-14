@@ -1,0 +1,128 @@
+# ------------------------------------------------------------------------------
+# This Compose example defines two isolated iCloud Photos backup workers.
+# ------------------------------------------------------------------------------
+name: pyiclodoc-photos-docker
+
+x-env:
+  &default-env
+  TZ: ${H_TZ}
+  PUID: ${C_UID}
+  PGID: ${C_GID}
+  LOG_LEVEL: ${C_LOG_LEVEL}
+  LOG_ROTATE_DAILY: ${C_LOG_ROTATE_DAILY}
+  LOG_ROTATE_MAX_MIB: ${C_LOG_ROTATE_MAX_MIB}
+  LOG_ROTATE_KEEP_DAYS: ${C_LOG_ROTATE_KEEP_DAYS}
+
+x-security:
+  &default-security
+  cap_drop:
+    - ALL
+  cap_add:
+    - SETUID
+    - SETGID
+
+secrets:
+  telegram_bot_token:
+    file: ${H_DKR_SECRETS}/telegram_bot_token.txt
+  alice_icloud_email:
+    file: ${H_DKR_SECRETS}/alice_icloud_email.txt
+  alice_icloud_password:
+    file: ${H_DKR_SECRETS}/alice_icloud_password.txt
+  bob_icloud_email:
+    file: ${H_DKR_SECRETS}/bob_icloud_email.txt
+  bob_icloud_password:
+    file: ${H_DKR_SECRETS}/bob_icloud_password.txt
+
+services:
+# ------------------------------------------------------------------------------
+# Service "icloud_photos_alice" runs the worker with isolated Alice state
+# paths.
+# ------------------------------------------------------------------------------
+  icloud_photos_alice:
+    image: "${IMG_NAME}:alpine-${ALP_VER}"
+    container_name: icloud_photos_alice
+    build:
+      context: .
+      args:
+        ALP_VER: "${ALP_VER}"
+        MCK_VER: "${MCK_VER}"
+    init: true
+    secrets:
+      - telegram_bot_token
+      - alice_icloud_email
+      - alice_icloud_password
+    <<: *default-security
+    environment:
+      <<: *default-env
+      CONTAINER_USERNAME: "alice"
+      ICLOUD_EMAIL_FILE: "${ALICE_ICLOUD_EMAIL_FILE}"
+      ICLOUD_PASSWORD_FILE: "${ALICE_ICLOUD_PASSWORD_FILE}"
+      REAUTH_INTERVAL_DAYS: "${ALICE_REAUTH_INTERVAL_DAYS}"
+      RUN_ONCE: "${ALICE_RUN_ONCE}"
+      SCHEDULE_MODE: "${ALICE_SCHEDULE_MODE}"
+      SCHEDULE_BACKUP_TIME: "${ALICE_SCHEDULE_BACKUP_TIME}"
+      SCHEDULE_WEEKDAYS: "${ALICE_SCHEDULE_WEEKDAYS}"
+      SCHEDULE_MONTHLY_WEEK: "${ALICE_SCHEDULE_MONTHLY_WEEK}"
+      SCHEDULE_INTERVAL_MINUTES: "${ALICE_SCHEDULE_INTERVAL_MINUTES}"
+      SYNC_TRAVERSAL_WORKERS: "${ALICE_SYNC_TRAVERSAL_WORKERS}"
+      SYNC_DOWNLOAD_WORKERS: "${ALICE_SYNC_DOWNLOAD_WORKERS}"
+      SYNC_DOWNLOAD_CHUNK_MIB: "${ALICE_SYNC_DOWNLOAD_CHUNK_MIB}"
+      BACKUP_DELETE_REMOVED: "${ALICE_BACKUP_DELETE_REMOVED}"
+      BACKUP_LIBRARY_ENABLED: "${ALICE_BACKUP_LIBRARY_ENABLED}"
+      BACKUP_ALBUMS_ENABLED: "${ALICE_BACKUP_ALBUMS_ENABLED}"
+      BACKUP_ALBUM_LINKS_MODE: "${ALICE_BACKUP_ALBUM_LINKS_MODE}"
+      BACKUP_INCLUDE_SHARED_ALBUMS: "${ALICE_BACKUP_INCLUDE_SHARED_ALBUMS}"
+      BACKUP_INCLUDE_FAVOURITES: "${ALICE_BACKUP_INCLUDE_FAVOURITES}"
+      TELEGRAM_CHAT_ID: "${H_TGM_CHAT_ID}"
+      TELEGRAM_BOT_TOKEN_FILE: "${ALICE_TGM_BOT_TOKEN_FILE}"
+    volumes:
+      - ${ALICE_CONFIG_PATH}:/config
+      - ${ALICE_OUTPUT_PATH}:/output
+      - ${ALICE_LOGS_PATH}:/logs
+    restart: "${ALICE_RESTART_POLICY}"
+
+# ------------------------------------------------------------------------------
+# Service "icloud_photos_bob" runs the worker with isolated Bob state paths.
+# ------------------------------------------------------------------------------
+  icloud_photos_bob:
+    image: "${IMG_NAME}:alpine-${ALP_VER}"
+    container_name: icloud_photos_bob
+    build:
+      context: .
+      args:
+        ALP_VER: "${ALP_VER}"
+        MCK_VER: "${MCK_VER}"
+    init: true
+    secrets:
+      - telegram_bot_token
+      - bob_icloud_email
+      - bob_icloud_password
+    <<: *default-security
+    environment:
+      <<: *default-env
+      CONTAINER_USERNAME: "bob"
+      ICLOUD_EMAIL_FILE: "${BOB_ICLOUD_EMAIL_FILE}"
+      ICLOUD_PASSWORD_FILE: "${BOB_ICLOUD_PASSWORD_FILE}"
+      REAUTH_INTERVAL_DAYS: "${BOB_REAUTH_INTERVAL_DAYS}"
+      RUN_ONCE: "${BOB_RUN_ONCE}"
+      SCHEDULE_MODE: "${BOB_SCHEDULE_MODE}"
+      SCHEDULE_BACKUP_TIME: "${BOB_SCHEDULE_BACKUP_TIME}"
+      SCHEDULE_WEEKDAYS: "${BOB_SCHEDULE_WEEKDAYS}"
+      SCHEDULE_MONTHLY_WEEK: "${BOB_SCHEDULE_MONTHLY_WEEK}"
+      SCHEDULE_INTERVAL_MINUTES: "${BOB_SCHEDULE_INTERVAL_MINUTES}"
+      SYNC_TRAVERSAL_WORKERS: "${BOB_SYNC_TRAVERSAL_WORKERS}"
+      SYNC_DOWNLOAD_WORKERS: "${BOB_SYNC_DOWNLOAD_WORKERS}"
+      SYNC_DOWNLOAD_CHUNK_MIB: "${BOB_SYNC_DOWNLOAD_CHUNK_MIB}"
+      BACKUP_DELETE_REMOVED: "${BOB_BACKUP_DELETE_REMOVED}"
+      BACKUP_LIBRARY_ENABLED: "${BOB_BACKUP_LIBRARY_ENABLED}"
+      BACKUP_ALBUMS_ENABLED: "${BOB_BACKUP_ALBUMS_ENABLED}"
+      BACKUP_ALBUM_LINKS_MODE: "${BOB_BACKUP_ALBUM_LINKS_MODE}"
+      BACKUP_INCLUDE_SHARED_ALBUMS: "${BOB_BACKUP_INCLUDE_SHARED_ALBUMS}"
+      BACKUP_INCLUDE_FAVOURITES: "${BOB_BACKUP_INCLUDE_FAVOURITES}"
+      TELEGRAM_CHAT_ID: "${H_TGM_CHAT_ID}"
+      TELEGRAM_BOT_TOKEN_FILE: "${BOB_TGM_BOT_TOKEN_FILE}"
+    volumes:
+      - ${BOB_CONFIG_PATH}:/config
+      - ${BOB_OUTPUT_PATH}:/output
+      - ${BOB_LOGS_PATH}:/logs
+    restart: "${BOB_RESTART_POLICY}"

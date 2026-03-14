@@ -1,0 +1,684 @@
+# ------------------------------------------------------------------------------
+# This module wraps pyicloud authentication, session persistence, and iCloud
+# Photos access.
+# ------------------------------------------------------------------------------
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+import hashlib
+import os
+import re
+import shutil
+
+from pyicloud import PyiCloudService
+
+from app.config import AppConfig
+
+FILE_NAME_SANITISE_PATTERN = re.compile(r"[^A-Za-z0-9._ -]+")
+
+
+# ------------------------------------------------------------------------------
+# This data class represents one remote photo asset and its derived backup
+# targets.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RemoteEntry:
+    path: str
+    is_dir: bool
+    size: int
+    modified: str
+    asset_id: str = ""
+    created: str = ""
+    download_name: str = ""
+    album_paths: tuple[str, ...] = field(default_factory=tuple)
+
+
+# ------------------------------------------------------------------------------
+# This class encapsulates iCloud auth, photo listing, and asset downloads.
+# ------------------------------------------------------------------------------
+class ICloudDriveClient:
+# --------------------------------------------------------------------------
+# This function stores runtime configuration and initialises client state.
+#
+# 1. "CONFIG" is the runtime configuration model used by this client.
+#
+# Returns: None.
+# --------------------------------------------------------------------------
+    def __init__(self, CONFIG: AppConfig):
+        self.config = CONFIG
+        self.api: PyiCloudService | None = None
+        self._last_download_failure_reason = ""
+
+# --------------------------------------------------------------------------
+# This function aligns cookie and session paths with an
+# icloudpd-compatible folder layout.
+#
+# Returns: None.
+# --------------------------------------------------------------------------
+    def prepare_compat_paths(self) -> None:
+        self.config.icloudpd_compat_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_link(self.config.icloudpd_compat_dir / "cookies", self.config.cookie_dir)
+        self._ensure_link(self.config.icloudpd_compat_dir / "session", self.config.session_dir)
+
+# --------------------------------------------------------------------------
+# This function creates a symlink and removes incompatible existing paths.
+#
+# 1. "LINK_PATH" is the compatibility symlink path.
+# 2. "TARGET_PATH" is the canonical storage directory.
+#
+# Returns: None.
+# --------------------------------------------------------------------------
+    def _ensure_link(self, LINK_PATH: Path, TARGET_PATH: Path) -> None:
+        if LINK_PATH.is_symlink():
+            try:
+                if LINK_PATH.resolve() == TARGET_PATH.resolve():
+                    return
+            except FileNotFoundError:
+                pass
+
+        if LINK_PATH.exists():
+            if LINK_PATH.is_dir() and not LINK_PATH.is_symlink():
+                shutil.rmtree(LINK_PATH)
+            else:
+                LINK_PATH.unlink()
+
+        LINK_PATH.symlink_to(TARGET_PATH, target_is_directory=True)
+
+# --------------------------------------------------------------------------
+# This function creates a pyicloud client with constructor compatibility
+# across library versions.
+#
+# Returns: Initialised "PyiCloudService" instance.
+# --------------------------------------------------------------------------
+    def _create_service(self) -> PyiCloudService:
+        return PyiCloudService(
+            self.config.icloud_email,
+            self.config.icloud_password,
+            cookie_directory=str(self.config.cookie_dir),
+        )
+
+# --------------------------------------------------------------------------
+# This function starts an iCloud authentication attempt.
+#
+# Returns: Tuple "(is_authenticated, details_message)".
+# --------------------------------------------------------------------------
+    def start_authentication(self) -> tuple[bool, str]:
+        self.prepare_compat_paths()
+        self.api = self._create_service()
+
+        if self.api.requires_2fa:
+            return False, "Two-factor code is required."
+
+        if getattr(self.api, "requires_2sa", False):
+            return False, "Two-step authentication is required; use app-specific passwords where possible."
+
+        return True, "Authenticated successfully."
+
+# --------------------------------------------------------------------------
+# This function completes a pending authentication challenge with an MFA code.
+#
+# 1. "CODE" is the MFA code to validate.
+#
+# Returns: Tuple "(is_authenticated, details_message)".
+# --------------------------------------------------------------------------
+    def complete_authentication(self, CODE: str) -> tuple[bool, str]:
+        if self.api is None:
+            return False, "Authentication session is not initialised."
+
+        CODE = CODE.strip()
+
+        if not CODE:
+            return False, "Two-factor code is required."
+
+        if not self.api.requires_2fa:
+            return True, "Authenticated successfully."
+
+        if not self.api.validate_2fa_code(CODE):
+            return False, "Two-factor code was rejected by Apple."
+
+        if self.api.is_trusted_session:
+            return True, "Authenticated successfully with 2FA."
+
+        if not self.api.trust_session():
+            return False, "Two-factor code was accepted, but Apple did not trust this session."
+
+        return True, "Authenticated successfully with trusted 2FA session."
+
+# --------------------------------------------------------------------------
+# This function authenticates with iCloud and optionally completes MFA.
+#
+# 1. "CODE_PROVIDER" is a zero-argument callable returning an MFA code when
+#    needed.
+#
+# Returns: Tuple "(is_authenticated, details_message)".
+# --------------------------------------------------------------------------
+    def authenticate(self, CODE_PROVIDER: Callable[[], str]) -> tuple[bool, str]:
+        CODE = CODE_PROVIDER().strip()
+
+        if CODE:
+            return self.complete_authentication(CODE)
+
+        return self.start_authentication()
+
+# --------------------------------------------------------------------------
+# This function lists remote photo assets as canonical backup entries.
+#
+# Returns: Flat list of photo entries.
+# --------------------------------------------------------------------------
+    def list_entries(self) -> list[RemoteEntry]:
+        if self.api is None:
+            return []
+
+        ALL_ASSETS = self._read_all_assets()
+        ALBUM_MAP = self._read_album_membership()
+        RESULT: list[RemoteEntry] = []
+
+        for INDEX, ASSET in enumerate(ALL_ASSETS, start=1):
+            ENTRY = self._build_remote_entry(ASSET, INDEX, ALBUM_MAP)
+            RESULT.append(ENTRY)
+
+        RESULT.sort(key=lambda ENTRY: ENTRY.path)
+        return RESULT
+
+# --------------------------------------------------------------------------
+# This function downloads one asset into the canonical library tree.
+#
+# 1. "REMOTE_PATH" is the canonical relative output path.
+# 2. "LOCAL_PATH" is the full destination file path.
+#
+# Returns: True on success, otherwise False.
+# --------------------------------------------------------------------------
+    def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+        if self.api is None:
+            self._last_download_failure_reason = "not_authenticated"
+            return False
+
+        ASSET = self._get_asset_by_remote_path(REMOTE_PATH)
+
+        if ASSET is None:
+            self._last_download_failure_reason = "asset_not_found"
+            return False
+
+        DOWNLOAD_HANDLE = self._open_asset_download(ASSET)
+
+        if DOWNLOAD_HANDLE is None:
+            self._last_download_failure_reason = "download_unavailable"
+            return False
+
+        LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with LOCAL_PATH.open("wb") as HANDLE:
+                for CHUNK in self._iter_download_chunks(DOWNLOAD_HANDLE):
+                    if not CHUNK:
+                        continue
+                    HANDLE.write(CHUNK)
+        except OSError:
+            self._last_download_failure_reason = "write_failed"
+            return False
+
+        self._last_download_failure_reason = ""
+        return True
+
+# --------------------------------------------------------------------------
+# This function keeps package-style transfer API compatibility.
+#
+# 1. "REMOTE_PATH" is the canonical relative output path.
+# 2. "LOCAL_PATH" is the full destination file path.
+#
+# Returns: True on success, otherwise False.
+# --------------------------------------------------------------------------
+    def download_package_tree(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+        return self.download_file(REMOTE_PATH, LOCAL_PATH)
+
+# --------------------------------------------------------------------------
+# This function returns the last download failure reason token.
+#
+# Returns: Short diagnostic token for sync failure reporting.
+# --------------------------------------------------------------------------
+    def get_last_download_failure_reason(self) -> str:
+        return self._last_download_failure_reason
+
+# --------------------------------------------------------------------------
+# This function reads the pyicloud photos service safely.
+#
+# Returns: Photos service object when available, otherwise None.
+# --------------------------------------------------------------------------
+    def _get_photos_service(self) -> Any | None:
+        if self.api is None:
+            return None
+
+        return getattr(self.api, "photos", None)
+
+# --------------------------------------------------------------------------
+# This function returns all assets from the main photos collection.
+#
+# Returns: List of remote asset objects.
+# --------------------------------------------------------------------------
+    def _read_all_assets(self) -> list[Any]:
+        PHOTOS = self._get_photos_service()
+
+        if PHOTOS is None:
+            return []
+
+        for CANDIDATE in self._candidate_all_assets(PHOTOS):
+            ASSETS = self._materialise_assets(CANDIDATE)
+            if ASSETS:
+                return ASSETS
+
+        return []
+
+# --------------------------------------------------------------------------
+# This function returns derived album membership keyed by asset identifier.
+#
+# Returns: Mapping from asset identifier to sanitised album-path tuple.
+# --------------------------------------------------------------------------
+    def _read_album_membership(self) -> dict[str, tuple[str, ...]]:
+        PHOTOS = self._get_photos_service()
+
+        if PHOTOS is None:
+            return {}
+
+        ALBUMS = self._normalise_album_mapping(getattr(PHOTOS, "albums", {}))
+        MEMBERSHIP: dict[str, list[str]] = {}
+
+        for ALBUM_NAME, ALBUM_NODE in ALBUMS.items():
+            if not self._should_include_album(ALBUM_NAME):
+                continue
+
+            for ASSET in self._materialise_assets(ALBUM_NODE):
+                ASSET_ID = self._asset_identifier(ASSET, 0)
+                MEMBERSHIP.setdefault(ASSET_ID, []).append(self._album_relative_path(ALBUM_NAME))
+
+        RESULT: dict[str, tuple[str, ...]] = {}
+
+        for ASSET_ID, PATHS in MEMBERSHIP.items():
+            RESULT[ASSET_ID] = tuple(sorted(set(PATHS)))
+
+        return RESULT
+
+# --------------------------------------------------------------------------
+# This function creates a stable remote entry from one pyicloud asset object.
+#
+# 1. "ASSET" is the pyicloud photo object.
+# 2. "INDEX" is a one-based fallback counter used when metadata is sparse.
+# 3. "ALBUM_MAP" maps asset IDs to album output paths.
+#
+# Returns: Normalised "RemoteEntry" for sync planning.
+# --------------------------------------------------------------------------
+    def _build_remote_entry(
+        self,
+        ASSET: Any,
+        INDEX: int,
+        ALBUM_MAP: dict[str, tuple[str, ...]],
+    ) -> RemoteEntry:
+        ASSET_ID = self._asset_identifier(ASSET, INDEX)
+        FILE_NAME = self._asset_file_name(ASSET, ASSET_ID)
+        CREATED = self._asset_created(ASSET)
+        MODIFIED = self._asset_modified(ASSET, CREATED)
+        SIZE = self._asset_size(ASSET)
+        CANONICAL_PATH = self._canonical_relative_path(CREATED, FILE_NAME)
+        ALBUM_PATHS = ALBUM_MAP.get(ASSET_ID, ())
+
+        return RemoteEntry(
+            path=CANONICAL_PATH,
+            is_dir=False,
+            size=SIZE,
+            modified=MODIFIED,
+            asset_id=ASSET_ID,
+            created=CREATED,
+            download_name=FILE_NAME,
+            album_paths=ALBUM_PATHS,
+        )
+
+# --------------------------------------------------------------------------
+# This function returns candidate "all assets" collections from pyicloud.
+#
+# 1. "PHOTOS" is the pyicloud photos service object.
+#
+# Returns: Ordered candidate iterable objects.
+# --------------------------------------------------------------------------
+    def _candidate_all_assets(self, PHOTOS: Any) -> tuple[Any, ...]:
+        ALBUMS = self._normalise_album_mapping(getattr(PHOTOS, "albums", {}))
+        return (
+            getattr(PHOTOS, "all", None),
+            getattr(PHOTOS, "all_photos", None),
+            ALBUMS.get("All Photos"),
+            ALBUMS.get("Recents"),
+        )
+
+# --------------------------------------------------------------------------
+# This function converts album containers into a predictable mapping.
+#
+# 1. "ALBUMS" is a pyicloud album container or dictionary.
+#
+# Returns: Dictionary keyed by album name.
+# --------------------------------------------------------------------------
+    def _normalise_album_mapping(self, ALBUMS: Any) -> dict[str, Any]:
+        if isinstance(ALBUMS, dict):
+            return ALBUMS
+
+        if hasattr(ALBUMS, "items"):
+            try:
+                return dict(ALBUMS.items())
+            except Exception:
+                return {}
+
+        return {}
+
+# --------------------------------------------------------------------------
+# This function materialises pyicloud asset iterables into a list.
+#
+# 1. "SOURCE" is an asset collection object.
+#
+# Returns: List of asset objects.
+# --------------------------------------------------------------------------
+    def _materialise_assets(self, SOURCE: Any) -> list[Any]:
+        if SOURCE is None:
+            return []
+
+        if isinstance(SOURCE, list):
+            return SOURCE
+
+        if isinstance(SOURCE, tuple):
+            return list(SOURCE)
+
+        try:
+            return list(SOURCE)
+        except TypeError:
+            return []
+
+# --------------------------------------------------------------------------
+# This function decides whether a named album should be backed up.
+#
+# 1. "ALBUM_NAME" is the raw remote album name.
+#
+# Returns: True when album output should be generated.
+# --------------------------------------------------------------------------
+    def _should_include_album(self, ALBUM_NAME: str) -> bool:
+        CLEAN_NAME = ALBUM_NAME.strip()
+
+        if not CLEAN_NAME:
+            return False
+
+        if CLEAN_NAME == "All Photos":
+            return False
+
+        if CLEAN_NAME == "Favourites":
+            return self.config.backup_include_favourites
+
+        if CLEAN_NAME == "Favorites":
+            return self.config.backup_include_favourites
+
+        if CLEAN_NAME == "Shared":
+            return self.config.backup_include_shared_albums
+
+        return True
+
+# --------------------------------------------------------------------------
+# This function returns the stable identifier for one asset.
+#
+# 1. "ASSET" is the pyicloud asset object.
+# 2. "INDEX" is fallback counter when no obvious asset identifier exists.
+#
+# Returns: Stable identifier string.
+# --------------------------------------------------------------------------
+    def _asset_identifier(self, ASSET: Any, INDEX: int) -> str:
+        for ATTRIBUTE in ("id", "photo_guid", "guid", "record_name", "recordName"):
+            VALUE = getattr(ASSET, ATTRIBUTE, "")
+            TEXT = str(VALUE).strip()
+            if TEXT:
+                return TEXT
+
+        DIGEST_SOURCE = "|".join(
+            [
+                self._asset_file_name(ASSET, f"asset-{INDEX:06d}"),
+                self._asset_created(ASSET),
+                str(self._asset_size(ASSET)),
+            ]
+        )
+        return hashlib.sha1(DIGEST_SOURCE.encode("utf-8")).hexdigest()
+
+# --------------------------------------------------------------------------
+# This function returns a stable filename for one asset.
+#
+# 1. "ASSET" is the pyicloud asset object.
+# 2. "ASSET_ID" is the stable asset identifier.
+#
+# Returns: Sanitised filename.
+# --------------------------------------------------------------------------
+    def _asset_file_name(self, ASSET: Any, ASSET_ID: str) -> str:
+        for ATTRIBUTE in ("filename", "name"):
+            VALUE = getattr(ASSET, ATTRIBUTE, "")
+            TEXT = self._sanitize_file_name(str(VALUE).strip())
+            if TEXT:
+                return TEXT
+
+        return f"{ASSET_ID}.jpg"
+
+# --------------------------------------------------------------------------
+# This function sanitises user-visible filenames for filesystem storage.
+#
+# 1. "NAME" is the source filename.
+#
+# Returns: Safe filename string.
+# --------------------------------------------------------------------------
+    def _sanitize_file_name(self, NAME: str) -> str:
+        CLEAN_NAME = FILE_NAME_SANITISE_PATTERN.sub("_", NAME).strip(" .")
+
+        if CLEAN_NAME:
+            return CLEAN_NAME
+
+        return "asset.jpg"
+
+# --------------------------------------------------------------------------
+# This function returns the asset creation timestamp as an ISO string.
+#
+# 1. "ASSET" is the pyicloud asset object.
+#
+# Returns: ISO timestamp string.
+# --------------------------------------------------------------------------
+    def _asset_created(self, ASSET: Any) -> str:
+        for ATTRIBUTE in ("created", "created_at", "date_created"):
+            VALUE = getattr(ASSET, ATTRIBUTE, None)
+            TEXT = self._datetime_to_iso(VALUE)
+            if TEXT:
+                return TEXT
+
+        return "1970-01-01T00:00:00+00:00"
+
+# --------------------------------------------------------------------------
+# This function returns the asset modified timestamp as an ISO string.
+#
+# 1. "ASSET" is the pyicloud asset object.
+# 2. "DEFAULT_VALUE" is used when no explicit modified timestamp exists.
+#
+# Returns: ISO timestamp string.
+# --------------------------------------------------------------------------
+    def _asset_modified(self, ASSET: Any, DEFAULT_VALUE: str) -> str:
+        for ATTRIBUTE in ("modified", "modified_at", "date_modified"):
+            VALUE = getattr(ASSET, ATTRIBUTE, None)
+            TEXT = self._datetime_to_iso(VALUE)
+            if TEXT:
+                return TEXT
+
+        return DEFAULT_VALUE
+
+# --------------------------------------------------------------------------
+# This function converts a datetime-like object into ISO text.
+#
+# 1. "VALUE" is a datetime-like object or string.
+#
+# Returns: ISO string when conversion is possible, otherwise empty string.
+# --------------------------------------------------------------------------
+    def _datetime_to_iso(self, VALUE: Any) -> str:
+        if VALUE is None:
+            return ""
+
+        if hasattr(VALUE, "isoformat"):
+            try:
+                return str(VALUE.isoformat())
+            except Exception:
+                return ""
+
+        TEXT = str(VALUE).strip()
+
+        if TEXT:
+            return TEXT
+
+        return ""
+
+# --------------------------------------------------------------------------
+# This function returns the declared asset size in bytes.
+#
+# 1. "ASSET" is the pyicloud asset object.
+#
+# Returns: Non-negative byte count.
+# --------------------------------------------------------------------------
+    def _asset_size(self, ASSET: Any) -> int:
+        for ATTRIBUTE in ("size", "file_size", "item_size"):
+            VALUE = getattr(ASSET, ATTRIBUTE, None)
+            if isinstance(VALUE, int) and VALUE >= 0:
+                return VALUE
+
+        return 0
+
+# --------------------------------------------------------------------------
+# This function builds the canonical year/month/day output path.
+#
+# 1. "CREATED" is ISO creation timestamp.
+# 2. "FILE_NAME" is the source filename.
+#
+# Returns: Relative output path under the library root.
+# --------------------------------------------------------------------------
+    def _canonical_relative_path(self, CREATED: str, FILE_NAME: str) -> str:
+        DATE_TEXT = CREATED.split("T", maxsplit=1)[0]
+        YEAR_TEXT, MONTH_TEXT, DAY_TEXT = self._safe_date_parts(DATE_TEXT)
+        return "/".join([self.config.backup_root_library, YEAR_TEXT, MONTH_TEXT, DAY_TEXT, FILE_NAME])
+
+# --------------------------------------------------------------------------
+# This function returns safe date parts from an ISO date string.
+#
+# 1. "DATE_TEXT" is a "YYYY-MM-DD" date-like string.
+#
+# Returns: Tuple "(year, month, day)".
+# --------------------------------------------------------------------------
+    def _safe_date_parts(self, DATE_TEXT: str) -> tuple[str, str, str]:
+        PARTS = DATE_TEXT.split("-")
+
+        if len(PARTS) != 3:
+            return ("1970", "01", "01")
+
+        YEAR_TEXT, MONTH_TEXT, DAY_TEXT = PARTS
+
+        if not YEAR_TEXT.isdigit():
+            YEAR_TEXT = "1970"
+
+        if not MONTH_TEXT.isdigit():
+            MONTH_TEXT = "01"
+
+        if not DAY_TEXT.isdigit():
+            DAY_TEXT = "01"
+
+        return (YEAR_TEXT.zfill(4), MONTH_TEXT.zfill(2), DAY_TEXT.zfill(2))
+
+# --------------------------------------------------------------------------
+# This function converts an album name into a relative album path.
+#
+# 1. "ALBUM_NAME" is the source album name.
+#
+# Returns: Relative output path under the albums root.
+# --------------------------------------------------------------------------
+    def _album_relative_path(self, ALBUM_NAME: str) -> str:
+        SAFE_NAME = self._sanitize_file_name(ALBUM_NAME).replace("/", "_")
+        return "/".join([self.config.backup_root_albums, SAFE_NAME])
+
+# --------------------------------------------------------------------------
+# This function resolves one asset object from a canonical remote path.
+#
+# 1. "REMOTE_PATH" is the canonical output path generated by this worker.
+#
+# Returns: Asset object when found, otherwise None.
+# --------------------------------------------------------------------------
+    def _get_asset_by_remote_path(self, REMOTE_PATH: str) -> Any | None:
+        for INDEX, ASSET in enumerate(self._read_all_assets(), start=1):
+            ENTRY = self._build_remote_entry(ASSET, INDEX, {})
+            if ENTRY.path == REMOTE_PATH:
+                return ASSET
+
+        return None
+
+# --------------------------------------------------------------------------
+# This function opens an asset download handle with broad pyicloud
+# compatibility.
+#
+# 1. "ASSET" is the pyicloud asset object.
+#
+# Returns: Download handle or response object, otherwise None.
+# --------------------------------------------------------------------------
+    def _open_asset_download(self, ASSET: Any) -> Any | None:
+        for METHOD_NAME in ("download", "open", "download_original"):
+            METHOD = getattr(ASSET, METHOD_NAME, None)
+            if METHOD is None:
+                continue
+
+            try:
+                return METHOD()
+            except TypeError:
+                try:
+                    return METHOD(stream=True)
+                except Exception:
+                    continue
+            except Exception:
+                continue
+
+        return None
+
+# --------------------------------------------------------------------------
+# This function yields bytes from a pyicloud download handle.
+#
+# 1. "DOWNLOAD_HANDLE" is a response-like object or byte payload.
+#
+# Returns: Iterator of byte chunks.
+# --------------------------------------------------------------------------
+    def _iter_download_chunks(self, DOWNLOAD_HANDLE: Any):
+        if isinstance(DOWNLOAD_HANDLE, bytes):
+            yield DOWNLOAD_HANDLE
+            return
+
+        if hasattr(DOWNLOAD_HANDLE, "iter_content"):
+            for CHUNK in DOWNLOAD_HANDLE.iter_content(
+                chunk_size=max(self.config.download_chunk_mib, 1) * 1024 * 1024
+            ):
+                yield CHUNK
+            return
+
+        RAW_STREAM = getattr(DOWNLOAD_HANDLE, "raw", None)
+
+        if RAW_STREAM is not None:
+            while True:
+                CHUNK = RAW_STREAM.read(max(self.config.download_chunk_mib, 1) * 1024 * 1024)
+                if not CHUNK:
+                    break
+                yield CHUNK
+            return
+
+        CONTENT = getattr(DOWNLOAD_HANDLE, "content", None)
+
+        if isinstance(CONTENT, bytes):
+            yield CONTENT
+            return
+
+        if hasattr(DOWNLOAD_HANDLE, "read"):
+            while True:
+                CHUNK = DOWNLOAD_HANDLE.read(max(self.config.download_chunk_mib, 1) * 1024 * 1024)
+                if not CHUNK:
+                    break
+                yield CHUNK
+            return
+
+        self._last_download_failure_reason = "empty_download"
+
