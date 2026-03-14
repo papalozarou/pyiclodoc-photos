@@ -194,14 +194,126 @@ class ICloudDriveClient:
 
         ALL_ASSETS = self._read_all_assets()
         ALBUM_MAP = self._read_album_membership()
-        RESULT: list[RemoteEntry] = []
-
-        for INDEX, ASSET in enumerate(ALL_ASSETS, start=1):
-            ENTRY = self._build_remote_entry(ASSET, INDEX, ALBUM_MAP)
-            RESULT.append(ENTRY)
+        RESULT = self._build_remote_entries(ALL_ASSETS, ALBUM_MAP)
+        RESULT = self._resolve_entry_path_collisions(RESULT)
 
         RESULT.sort(key=lambda ENTRY: ENTRY.path)
         return RESULT
+
+# --------------------------------------------------------------------------
+# This function builds base remote entries before collision resolution.
+#
+# 1. "ALL_ASSETS" is the full photo asset list.
+# 2. "ALBUM_MAP" maps asset IDs to album output paths.
+#
+# Returns: List of normalised entries using the readable default layout.
+# --------------------------------------------------------------------------
+    def _build_remote_entries(
+        self,
+        ALL_ASSETS: list[Any],
+        ALBUM_MAP: dict[str, tuple[str, ...]],
+    ) -> list[RemoteEntry]:
+        RESULT: list[RemoteEntry] = []
+
+        for INDEX, ASSET in enumerate(ALL_ASSETS, start=1):
+            RESULT.append(self._build_remote_entry(ASSET, INDEX, ALBUM_MAP))
+
+        return RESULT
+
+# --------------------------------------------------------------------------
+# This function resolves canonical-path collisions across built entries.
+#
+# 1. "ENTRIES" is the base remote-entry list.
+#
+# Returns: Entry list with deterministic disambiguation applied when needed.
+#
+# N.B.
+# Distinct assets can legitimately share the same day and original filename.
+# When that happens, every colliding entry receives a stable suffix derived
+# from asset identity so canonical and album outputs remain unambiguous.
+# --------------------------------------------------------------------------
+    def _resolve_entry_path_collisions(
+        self,
+        ENTRIES: list[RemoteEntry],
+    ) -> list[RemoteEntry]:
+        PATH_GROUPS: dict[str, list[RemoteEntry]] = {}
+
+        for ENTRY in ENTRIES:
+            PATH_GROUPS.setdefault(ENTRY.path, []).append(ENTRY)
+
+        RESULT: list[RemoteEntry] = []
+
+        for ORIGINAL_PATH in sorted(PATH_GROUPS.keys()):
+            GROUP = PATH_GROUPS[ORIGINAL_PATH]
+
+            if len(GROUP) == 1:
+                RESULT.extend(GROUP)
+                continue
+
+            RESULT.extend(self._disambiguate_entry_group(GROUP))
+
+        return RESULT
+
+# --------------------------------------------------------------------------
+# This function rewrites one colliding entry group to unique stable paths.
+#
+# 1. "ENTRIES" is the colliding entry group.
+#
+# Returns: Entry list with suffixes applied to file names in a stable order.
+# --------------------------------------------------------------------------
+    def _disambiguate_entry_group(self, ENTRIES: list[RemoteEntry]) -> list[RemoteEntry]:
+        RESULT: list[RemoteEntry] = []
+        SORTED_ENTRIES = sorted(ENTRIES, key=lambda ENTRY: (ENTRY.asset_id, ENTRY.modified, ENTRY.path))
+
+        for ENTRY in SORTED_ENTRIES:
+            DISAMBIGUATED_NAME = self._add_collision_suffix(
+                ENTRY.download_name,
+                ENTRY.asset_id,
+            )
+            CANONICAL_PATH = self._replace_file_name(ENTRY.path, DISAMBIGUATED_NAME)
+            RESULT.append(
+                RemoteEntry(
+                    path=CANONICAL_PATH,
+                    is_dir=ENTRY.is_dir,
+                    size=ENTRY.size,
+                    modified=ENTRY.modified,
+                    asset_id=ENTRY.asset_id,
+                    created=ENTRY.created,
+                    download_name=DISAMBIGUATED_NAME,
+                    album_paths=ENTRY.album_paths,
+                )
+            )
+
+        return RESULT
+
+# --------------------------------------------------------------------------
+# This function adds a stable collision suffix to a file name.
+#
+# 1. "FILE_NAME" is the original or sanitised file name.
+# 2. "ASSET_ID" is the stable asset identifier.
+#
+# Returns: File name with collision suffix inserted before the extension.
+# --------------------------------------------------------------------------
+    def _add_collision_suffix(self, FILE_NAME: str, ASSET_ID: str) -> str:
+        BASE_NAME, FILE_SUFFIX = os.path.splitext(FILE_NAME)
+        SUFFIX_DIGEST = hashlib.sha1(ASSET_ID.encode("utf-8")).hexdigest()[:12]
+        return f"{BASE_NAME}--{SUFFIX_DIGEST}{FILE_SUFFIX}"
+
+# --------------------------------------------------------------------------
+# This function replaces the trailing file name in a relative path.
+#
+# 1. "RELATIVE_PATH" is the relative output path.
+# 2. "FILE_NAME" is the replacement file name.
+#
+# Returns: Relative path with the new trailing file name applied.
+# --------------------------------------------------------------------------
+    def _replace_file_name(self, RELATIVE_PATH: str, FILE_NAME: str) -> str:
+        PARENT_TEXT = str(Path(RELATIVE_PATH).parent).replace("\\", "/")
+
+        if PARENT_TEXT == ".":
+            return FILE_NAME
+
+        return f"{PARENT_TEXT}/{FILE_NAME}"
 
 # --------------------------------------------------------------------------
 # This function downloads one asset into the canonical library tree.
@@ -490,7 +602,9 @@ class ICloudDriveClient:
             [
                 self._asset_file_name(ASSET, f"asset-{INDEX:06d}"),
                 self._asset_created(ASSET),
+                self._asset_modified(ASSET, self._asset_created(ASSET)),
                 str(self._asset_size(ASSET)),
+                str(INDEX),
             ]
         )
         return hashlib.sha1(DIGEST_SOURCE.encode("utf-8")).hexdigest()

@@ -89,3 +89,42 @@ class TestIcloudClient(unittest.TestCase):
         self.assertEqual(len(ENTRIES), 1)
         self.assertEqual(ENTRIES[0].path, "library/2026/03/14/IMG_0001.JPG")
         self.assertEqual(ENTRIES[0].album_paths, ("albums/Favourites", "albums/Trips"))
+
+# --------------------------------------------------------------------------
+# This test confirms colliding day-and-filename assets receive deterministic
+# disambiguated output names instead of collapsing into one path.
+# --------------------------------------------------------------------------
+    def test_list_entries_disambiguates_colliding_canonical_paths(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        FIRST_ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=1024,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+        )
+        SECOND_ASSET = SimpleNamespace(
+            id="asset-2",
+            filename="IMG_0001.JPG",
+            size=2048,
+            created=datetime(2026, 3, 14, 10, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 10, 31, tzinfo=timezone.utc),
+        )
+        CLIENT.api = SimpleNamespace(
+            photos=SimpleNamespace(
+                all=[FIRST_ASSET, SECOND_ASSET],
+                albums={"Trips": [FIRST_ASSET, SECOND_ASSET]},
+            )
+        )
+
+        ENTRIES = CLIENT.list_entries()
+        PATHS = [ENTRY.path for ENTRY in ENTRIES]
+        DOWNLOAD_NAMES = [ENTRY.download_name for ENTRY in ENTRIES]
+
+        self.assertEqual(len(ENTRIES), 2)
+        self.assertEqual(len(set(PATHS)), 2)
+        self.assertEqual(len(set(DOWNLOAD_NAMES)), 2)
+        self.assertTrue(
+            all(PATH.startswith("library/2026/03/14/IMG_0001--") for PATH in PATHS)
+        )
+        self.assertTrue(all(NAME.endswith(".JPG") for NAME in DOWNLOAD_NAMES))
