@@ -1,0 +1,114 @@
+# ------------------------------------------------------------------------------
+# This test module verifies Telegram command intake and command-side state
+# changes.
+# ------------------------------------------------------------------------------
+
+from pathlib import Path
+import tempfile
+import unittest
+
+from tests._stubs import install_dependency_stubs
+
+install_dependency_stubs()
+
+from app.config import AppConfig
+from app.state import AuthState
+from app.telegram_control import handle_command
+
+
+# ------------------------------------------------------------------------------
+# This function builds a minimal app config for Telegram control tests.
+# ------------------------------------------------------------------------------
+def create_config(ROOT_DIR: Path) -> AppConfig:
+    return AppConfig(
+        container_username="alice",
+        icloud_email="alice@example.com",
+        icloud_password="secret",
+        telegram_bot_token="token",
+        telegram_chat_id="1",
+        keychain_service_name="icloud-photos-backup",
+        run_once=False,
+        schedule_mode="interval",
+        schedule_backup_time="02:00",
+        schedule_weekdays="monday",
+        schedule_monthly_week="first",
+        schedule_interval_minutes=1440,
+        backup_delete_removed=False,
+        traversal_workers=1,
+        sync_workers=0,
+        download_chunk_mib=4,
+        reauth_interval_days=30,
+        output_dir=ROOT_DIR / "output",
+        config_dir=ROOT_DIR / "config",
+        logs_dir=ROOT_DIR / "logs",
+        manifest_path=ROOT_DIR / "config" / "pyiclodoc-photos-manifest.json",
+        auth_state_path=ROOT_DIR / "config" / "pyiclodoc-photos-auth_state.json",
+        heartbeat_path=ROOT_DIR / "logs" / "pyiclodoc-photos-heartbeat.txt",
+        cookie_dir=ROOT_DIR / "config" / "cookies",
+        session_dir=ROOT_DIR / "config" / "session",
+        icloudpd_compat_dir=ROOT_DIR / "config" / "icloudpd",
+        safety_net_sample_size=200,
+        backup_library_enabled=True,
+        backup_albums_enabled=True,
+        backup_album_links_mode="hardlink",
+        backup_include_shared_albums=True,
+        backup_include_favourites=True,
+        backup_root_library="library",
+        backup_root_albums="albums",
+    )
+
+
+# ------------------------------------------------------------------------------
+# These tests verify extracted Telegram command logic.
+# ------------------------------------------------------------------------------
+class TestTelegramControl(unittest.TestCase):
+# --------------------------------------------------------------------------
+# This test confirms a backup command returns backup intent and sends the
+# request message.
+# --------------------------------------------------------------------------
+    def test_handle_command_sets_backup_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            ROOT_DIR = Path(TMPDIR)
+            CONFIG = create_config(ROOT_DIR)
+            AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+            SENT_MESSAGES: list[str] = []
+
+            OUTCOME = handle_command(
+                "backup",
+                "",
+                CONFIG,
+                AUTH_STATE,
+                True,
+                SENT_MESSAGES.append,
+                lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, True, PROVIDED_CODE),
+            )
+
+        self.assertTrue(OUTCOME.backup_requested)
+        self.assertTrue(SENT_MESSAGES)
+        self.assertIn("Backup requested", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms a manual auth prompt updates state and emits the auth
+# message without marking a backup request.
+# --------------------------------------------------------------------------
+    def test_handle_command_marks_auth_pending_without_code(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            ROOT_DIR = Path(TMPDIR)
+            CONFIG = create_config(ROOT_DIR)
+            CONFIG.config_dir.mkdir(parents=True, exist_ok=True)
+            AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+            SENT_MESSAGES: list[str] = []
+
+            OUTCOME = handle_command(
+                "auth",
+                "",
+                CONFIG,
+                AUTH_STATE,
+                False,
+                SENT_MESSAGES.append,
+                lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, False, PROVIDED_CODE),
+            )
+
+        self.assertTrue(OUTCOME.auth_state.auth_pending)
+        self.assertFalse(OUTCOME.backup_requested)
+        self.assertIn("Authentication required", SENT_MESSAGES[0])
