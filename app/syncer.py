@@ -242,9 +242,16 @@ def perform_incremental_sync(
         log_line(LOG_FILE, "info", "Remote photo listing started.")
 
     ENTRIES = CLIENT.list_entries()
+    FILES = [ENTRY for ENTRY in ENTRIES if not ENTRY.is_dir]
 
     if LOG_FILE is not None:
-        log_line(LOG_FILE, "info", f"Remote photo listing finished. files={len(ENTRIES)}.")
+        log_line(LOG_FILE, "info", f"Remote photo listing finished. files={len(FILES)}.")
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Remote listing detail: "
+            f"entries={len(ENTRIES)}, files={len(FILES)}",
+        )
 
     NEW_MANIFEST: dict[str, dict[str, Any]] = {}
     TRANSFER_CANDIDATES: list[RemoteEntry] = []
@@ -252,14 +259,24 @@ def perform_incremental_sync(
     TRANSFERRED_BYTES = 0
     SKIPPED = 0
     ERRORS = 0
+    FAILURE_REASON_COUNTS: dict[str, int] = {}
 
-    for ENTRY in ENTRIES:
+    for ENTRY in FILES:
         if needs_transfer(ENTRY, MANIFEST):
             TRANSFER_CANDIDATES.append(ENTRY)
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    f"Photo queued for transfer: {ENTRY.path} "
+                    f"({max(ENTRY.size, 0)} bytes)",
+                )
             continue
 
         NEW_MANIFEST[ENTRY.path] = entry_metadata(ENTRY)
         SKIPPED += 1
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", f"Photo skipped unchanged: {ENTRY.path}")
 
     if LOG_FILE is not None:
         log_line(
@@ -270,8 +287,23 @@ def perform_incremental_sync(
         )
 
     if TRANSFER_CANDIDATES:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "info",
+                f"Transfer started. candidates={len(TRANSFER_CANDIDATES)}.",
+            )
+
         WORKER_COUNT = get_transfer_worker_count(SYNC_DOWNLOAD_WORKERS)
-        TRANSFERRED, TRANSFERRED_BYTES, ERRORS = run_transfers(
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                "Transfer execution detail: "
+                f"workers={WORKER_COUNT}, sync_workers={SYNC_DOWNLOAD_WORKERS}",
+            )
+
+        TRANSFERRED, TRANSFERRED_BYTES, ERRORS, FAILURE_REASON_COUNTS = run_transfers(
             CLIENT,
             OUTPUT_DIR,
             TRANSFER_CANDIDATES,
@@ -279,14 +311,70 @@ def perform_incremental_sync(
             LOG_FILE,
             WORKER_COUNT,
         )
+    elif LOG_FILE is not None:
+        log_line(LOG_FILE, "info", "Transfer skipped. candidates=0.")
 
-    reconcile_album_views(OUTPUT_DIR, ENTRIES, NEW_MANIFEST, LOG_FILE)
+    if LOG_FILE is not None:
+        log_line(LOG_FILE, "info", "Album reconciliation started.")
+
+    ALBUM_VIEWS_CREATED, ALBUM_VIEWS_REUSED, ALBUM_VIEWS_SKIPPED = reconcile_album_views(
+        OUTPUT_DIR,
+        FILES,
+        NEW_MANIFEST,
+        LOG_FILE,
+    )
+
+    if LOG_FILE is not None:
+        log_line(
+            LOG_FILE,
+            "info",
+            "Album reconciliation finished. "
+            f"created={ALBUM_VIEWS_CREATED}, "
+            f"reused={ALBUM_VIEWS_REUSED}, "
+            f"skipped_missing_source={ALBUM_VIEWS_SKIPPED}.",
+        )
 
     if BACKUP_DELETE_REMOVED:
-        delete_removed_local_paths(OUTPUT_DIR, ENTRIES, NEW_MANIFEST, LOG_FILE)
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "info", "Delete phase started.")
+
+        DELETED_FILES, DELETED_DIRECTORIES, DELETE_ERRORS = delete_removed_local_paths(
+            OUTPUT_DIR,
+            FILES,
+            NEW_MANIFEST,
+            LOG_FILE,
+        )
+
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "info",
+                "Delete phase finished. "
+                f"deleted_files={DELETED_FILES}, "
+                f"deleted_directories={DELETED_DIRECTORIES}, "
+                f"errors={DELETE_ERRORS}.",
+            )
+
+    if LOG_FILE is not None:
+        log_line(
+            LOG_FILE,
+            "info",
+            "Transfer finished. "
+            f"transferred={TRANSFERRED}, skipped={SKIPPED}, errors={ERRORS}.",
+        )
+        if FAILURE_REASON_COUNTS:
+            DETAIL_TEXT = ", ".join(
+                f"{REASON}={COUNT}"
+                for REASON, COUNT in sorted(FAILURE_REASON_COUNTS.items())
+            )
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Transfer failure reason detail: {DETAIL_TEXT}",
+            )
 
     return SyncResult(
-        total_files=len(ENTRIES),
+        total_files=len(FILES),
         transferred_files=TRANSFERRED,
         transferred_bytes=TRANSFERRED_BYTES,
         skipped_files=SKIPPED,
@@ -304,7 +392,7 @@ def perform_incremental_sync(
 # 5. "LOG_FILE" is optional log file path.
 # 6. "WORKER_COUNT" is the bounded transfer pool size.
 #
-# Returns: Tuple "(transferred, transferred_bytes, errors)".
+# Returns: Tuple "(transferred, transferred_bytes, errors, failure_reason_counts)".
 # 
 # N.B.
 # Transfer workers only touch canonical file paths. Album views are rebuilt in
@@ -317,10 +405,11 @@ def run_transfers(
     NEW_MANIFEST: dict[str, dict[str, Any]],
     LOG_FILE: Path | None,
     WORKER_COUNT: int,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, dict[str, int]]:
     TRANSFERRED = 0
     TRANSFERRED_BYTES = 0
     ERRORS = 0
+    FAILURE_REASON_COUNTS: dict[str, int] = {}
     STARTED_EPOCH = time.monotonic()
     LAST_PROGRESS_EPOCH = STARTED_EPOCH
 
@@ -347,6 +436,8 @@ def run_transfers(
                     IS_SUCCESS = FUTURE.result()
                 except Exception as ERROR:
                     IS_SUCCESS = False
+                    REASON = f"worker_exception:{type(ERROR).__name__}"
+                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                     if LOG_FILE is not None:
                         log_line(
                             LOG_FILE,
@@ -360,13 +451,23 @@ def run_transfers(
                     NEW_MANIFEST[ENTRY.path] = entry_metadata(ENTRY)
                     TRANSFERRED += 1
                     TRANSFERRED_BYTES += max(ENTRY.size, 0)
+                    if LOG_FILE is not None:
+                        log_line(
+                            LOG_FILE,
+                            "debug",
+                            f"Photo transferred: {ENTRY.path} ({max(ENTRY.size, 0)} bytes)",
+                        )
                     continue
 
                 ERRORS += 1
 
                 if LOG_FILE is not None:
                     REASON = CLIENT.get_last_download_failure_reason() or "unknown_error"
+                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                     log_line(LOG_FILE, "error", f"File transfer failed: {ENTRY.path} ({REASON})")
+                else:
+                    REASON = CLIENT.get_last_download_failure_reason() or "unknown_error"
+                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
 
             NOW_EPOCH = time.monotonic()
 
@@ -391,7 +492,7 @@ def run_transfers(
             log_line(LOG_FILE, "debug", PROGRESS_LOG_SEPARATOR)
             LAST_PROGRESS_EPOCH = NOW_EPOCH
 
-    return TRANSFERRED, TRANSFERRED_BYTES, ERRORS
+    return TRANSFERRED, TRANSFERRED_BYTES, ERRORS, FAILURE_REASON_COUNTS
 
 
 # ------------------------------------------------------------------------------
@@ -445,7 +546,7 @@ def apply_remote_modified_time(LOCAL_PATH: Path, MODIFIED: str) -> None:
 # 3. "NEW_MANIFEST" is the refreshed manifest under construction.
 # 4. "LOG_FILE" is optional log file path.
 #
-# Returns: None.
+# Returns: Tuple "(created, reused, skipped_missing_source)".
 # 
 # N.B.
 # Album view creation is intentionally best-effort. Missing canonical files are
@@ -456,7 +557,11 @@ def reconcile_album_views(
     ENTRIES: list[RemoteEntry],
     NEW_MANIFEST: dict[str, dict[str, Any]],
     LOG_FILE: Path | None,
-) -> None:
+) -> tuple[int, int, int]:
+    CREATED = 0
+    REUSED = 0
+    SKIPPED_MISSING_SOURCE = 0
+
     for ENTRY in ENTRIES:
         if not ENTRY.album_paths:
             continue
@@ -464,16 +569,29 @@ def reconcile_album_views(
         SOURCE_PATH = OUTPUT_DIR / ENTRY.path
 
         if not SOURCE_PATH.exists():
+            SKIPPED_MISSING_SOURCE += len(ENTRY.album_paths)
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    "Album view skipped missing canonical source: "
+                    f"{ENTRY.path}",
+                )
             continue
 
         for ALBUM_DIR in ENTRY.album_paths:
             TARGET_PATH = OUTPUT_DIR / ALBUM_DIR / ENTRY.download_name
-            create_album_link(SOURCE_PATH, TARGET_PATH)
+            WAS_CREATED = create_album_link(SOURCE_PATH, TARGET_PATH)
             NEW_MANIFEST[str(TARGET_PATH.relative_to(OUTPUT_DIR))] = {
                 "entry_kind": "album_link",
                 "is_dir": False,
                 "source_path": ENTRY.path,
             }
+
+            if WAS_CREATED:
+                CREATED += 1
+            else:
+                REUSED += 1
 
             if LOG_FILE is None:
                 continue
@@ -481,8 +599,12 @@ def reconcile_album_views(
             log_line(
                 LOG_FILE,
                 "debug",
-                f"Album view refreshed: {TARGET_PATH.relative_to(OUTPUT_DIR)} -> {ENTRY.path}",
+                "Album view refreshed: "
+                f"{TARGET_PATH.relative_to(OUTPUT_DIR)} -> {ENTRY.path} "
+                f"(created={str(WAS_CREATED).lower()})",
             )
+
+    return CREATED, REUSED, SKIPPED_MISSING_SOURCE
 
 
 # ------------------------------------------------------------------------------
@@ -491,26 +613,27 @@ def reconcile_album_views(
 # 1. "SOURCE_PATH" is the canonical library file.
 # 2. "TARGET_PATH" is the album-view file path.
 #
-# Returns: None.
+# Returns: True when a new hard link or copy was created, otherwise False.
 # 
 # N.B.
 # Hard links are preferred because they avoid duplicate data. Copy fallback is
 # retained for filesystems and bind mounts that do not permit linking.
 # ------------------------------------------------------------------------------
-def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> None:
+def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> bool:
     TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if TARGET_PATH.exists():
         if same_file_contents(TARGET_PATH, SOURCE_PATH):
-            return
+            return False
 
         TARGET_PATH.unlink()
 
     try:
         os.link(SOURCE_PATH, TARGET_PATH)
-        return
+        return True
     except OSError:
         shutil.copy2(SOURCE_PATH, TARGET_PATH)
+        return True
 
 
 # ------------------------------------------------------------------------------
@@ -546,7 +669,7 @@ def same_file_contents(LEFT_PATH: Path, RIGHT_PATH: Path) -> bool:
 # 3. "NEW_MANIFEST" is the refreshed manifest under construction.
 # 4. "LOG_FILE" is optional log file path.
 #
-# Returns: None.
+# Returns: Tuple "(deleted_files, deleted_directories, errors)".
 # 
 # N.B.
 # Delete handling is filesystem-driven. The manifest is updated
@@ -557,8 +680,12 @@ def delete_removed_local_paths(
     ENTRIES: list[RemoteEntry],
     NEW_MANIFEST: dict[str, dict[str, Any]],
     LOG_FILE: Path | None,
-) -> None:
+) -> tuple[int, int, int]:
     DESIRED_PATHS = desired_relative_paths(ENTRIES)
+    PROTECTED_PATHS = get_protected_local_paths(OUTPUT_DIR, LOG_FILE)
+    DELETED_FILES = 0
+    DELETED_DIRECTORIES = 0
+    ERRORS = 0
 
     for PATH in OUTPUT_DIR.rglob("*"):
         if not PATH.is_file():
@@ -566,22 +693,45 @@ def delete_removed_local_paths(
 
         RELATIVE_PATH = str(PATH.relative_to(OUTPUT_DIR))
 
-        if RELATIVE_PATH in DESIRED_PATHS:
+        if RELATIVE_PATH in DESIRED_PATHS or RELATIVE_PATH in PROTECTED_PATHS:
             continue
 
         try:
             PATH.unlink()
         except OSError:
+            ERRORS += 1
+            if LOG_FILE is not None:
+                log_line(LOG_FILE, "debug", f"Local file delete error: {RELATIVE_PATH}")
             continue
 
         NEW_MANIFEST.pop(RELATIVE_PATH, None)
+        DELETED_FILES += 1
 
         if LOG_FILE is None:
             continue
 
         log_line(LOG_FILE, "debug", f"Removed local file: {RELATIVE_PATH}")
 
-    prune_empty_directories(OUTPUT_DIR)
+    DELETED_DIRECTORIES += prune_empty_directories(OUTPUT_DIR, LOG_FILE)
+    return DELETED_FILES, DELETED_DIRECTORIES, ERRORS
+
+
+# ------------------------------------------------------------------------------
+# This function returns local paths that the delete phase must never remove.
+#
+# 1. "OUTPUT_DIR" is local backup root.
+# 2. "LOG_FILE" is optional worker log path.
+#
+# Returns: Relative-path set protected from delete handling.
+# ------------------------------------------------------------------------------
+def get_protected_local_paths(OUTPUT_DIR: Path, LOG_FILE: Path | None) -> set[str]:
+    if LOG_FILE is None:
+        return set()
+
+    try:
+        return {str(LOG_FILE.relative_to(OUTPUT_DIR))}
+    except ValueError:
+        return set()
 
 
 # ------------------------------------------------------------------------------
@@ -612,15 +762,16 @@ def desired_relative_paths(ENTRIES: list[RemoteEntry]) -> set[str]:
 #
 # 1. "OUTPUT_DIR" is local backup root.
 #
-# Returns: None.
+# Returns: Count of removed directories.
 # 
 # N.B.
 # Directories are pruned deepest-first so parents are only considered after any
 # removable children have already been handled.
 # ------------------------------------------------------------------------------
-def prune_empty_directories(OUTPUT_DIR: Path) -> None:
+def prune_empty_directories(OUTPUT_DIR: Path, LOG_FILE: Path | None = None) -> int:
     DIRECTORIES = [PATH for PATH in OUTPUT_DIR.rglob("*") if PATH.is_dir()]
     DIRECTORIES.sort(key=lambda PATH: len(PATH.parts), reverse=True)
+    DELETED_DIRECTORIES = 0
 
     for DIR_PATH in DIRECTORIES:
         try:
@@ -628,7 +779,16 @@ def prune_empty_directories(OUTPUT_DIR: Path) -> None:
         except StopIteration:
             try:
                 DIR_PATH.rmdir()
+                DELETED_DIRECTORIES += 1
+                if LOG_FILE is not None:
+                    log_line(
+                        LOG_FILE,
+                        "debug",
+                        f"Removed empty directory: {DIR_PATH.relative_to(OUTPUT_DIR)}",
+                    )
             except OSError:
                 continue
         except OSError:
             continue
+
+    return DELETED_DIRECTORIES
