@@ -1,20 +1,43 @@
 # PyiCloDoc Photos
 
-A dockerised `pyicloud` worker for backing up iCloud Photos to local storage, with Telegram used for auth prompts, reauth prompts, status messages, and manual backups.
+A dockerised `pyicloud` implementation for backing up iCloud Photos to local
+storage, with Telegram used for auth prompts, reauth prompts, manual control,
+and operational messages.
+
+It aims to be practical for real use rather than just proving that downloads
+work. That means:
+
+- persistent auth, session, and keyring state;
+- manifest-driven incremental downloads;
+- one-shot and scheduled modes;
+- Telegram-driven auth and manual backup control;
+- first-run ownership safety checks before touching an existing backup tree;
+- support for more than one isolated worker in the same Compose project; and
+- a canonical photo library layout plus optional derived album views.
+
+## Example usage
+
+The example `compose.yml` and `.env` files run two isolated workers out of the
+box, Alice and Bob, each with separate config, output, and logs. Those example
+files are intended to be edited directly and should give you enough to get a
+real deployment running.
 
 ## Quick start
 
 1. Copy `compose.yml.example` to `compose.yml`.
 2. Copy `.env.example` to `.env`.
-3. Set host paths and service values in `.env`.
-4. Create secret files under `${H_DKR_SECRETS}`.
-5. Start the stack:
+3. Set host and service values in `.env`.
+4. Create secret files under `${H_DKR_SECRETS}`:
+   `telegram_bot_token.txt`, `alice_icloud_email.txt`,
+   `alice_icloud_password.txt`, `bob_icloud_email.txt`,
+   `bob_icloud_password.txt`.
+5. Start containers:
 
 ```bash
 docker compose up -d --build
 ```
 
-6. Check health:
+6. Check status:
 
 ```bash
 docker compose ps
@@ -22,29 +45,62 @@ docker inspect --format='{{json .State.Health}}' icloud_photos_alice
 docker inspect --format='{{json .State.Health}}' icloud_photos_bob
 ```
 
-## What it does
+## What the backup layout looks like
 
-- Uses the same app shape and pinned `pyicloud` version as `pyiclodoc-drive`.
-- Runs as root only long enough to read secrets, then drops to the configured UID and GID.
-- Stores canonical files under `library/<year>/<month>/<day>/`.
-- Builds optional album views under `albums/`, using hard links where possible and copy fallback where needed.
-- Keeps auth state, session state, and keyring state on mounted storage so MFA prompts are not repeated on every start.
-- Supports one-shot, interval, daily, weekly, twice-weekly, and monthly schedules.
-- Accepts Telegram commands in the form `<username> backup`, `<username> auth`, and `<username> reauth`.
+Canonical files are stored under:
+
+```text
+library/<year>/<month>/<day>/
+```
+
+For example:
+
+```text
+library/2026/03/14/IMG_1234.HEIC
+library/2026/03/14/IMG_1234.MOV
+```
+
+Optional album views are stored under:
+
+```text
+albums/<album name>/
+```
+
+For example:
+
+```text
+albums/Trips/IMG_1234.HEIC
+albums/Favourites/IMG_1234.HEIC
+```
+
+N.B.
+
+The `albums/` tree is derived from the canonical files. It is useful for
+browsing and external tooling, but it does not by itself preserve album
+membership for later reimport into Photos.app.
 
 ## Testing
+
+Run the unit tests with:
 
 ```bash
 python3 -m unittest -q
 ```
 
-## Documentation
+## Detailed documentation
 
-- [CONFIGURATION.md](CONFIGURATION.md): env vars, paths, and storage layout.
-- [SCHEDULING.md](SCHEDULING.md): schedule modes and examples.
-- [TELEGRAM.md](TELEGRAM.md): command format and outbound messages.
-- [OPERATIONS.md](OPERATIONS.md): runtime behaviour, safety net, and backup layout.
+- [CONFIGURATION.md](CONFIGURATION.md): env variables, paths, state layout, and
+  default behaviour.
+- [SCHEDULING.md](SCHEDULING.md): schedule modes, compatibility rules, and
+  manual backup behaviour.
+- [TELEGRAM.md](TELEGRAM.md): command format, auth flow, reauth flow, and
+  outbound message structure.
+- [OPERATIONS.md](OPERATIONS.md): runtime behaviour, privilege model,
+  performance notes, safety-net behaviour, and backup layout.
 
 ## License
 
 This project is provided under the GNU General Public License v3.0.
+
+You can use, modify, and redistribute this project, but any redistributed
+modified version must also remain under GPL-3.0 and include the source code.

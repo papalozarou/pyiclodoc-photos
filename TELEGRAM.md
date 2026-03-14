@@ -2,7 +2,7 @@
 
 ## Command format
 
-Commands are only accepted from the configured Telegram chat ID.
+Commands are only accepted from the chat ID configured in `H_TGM_CHAT_ID`.
 
 Supported command forms:
 
@@ -12,20 +12,50 @@ Supported command forms:
 - `<username> reauth`
 - `<username> reauth 123456`
 
+N.B.
+
 `<username>` must match the container username for that worker service.
 
-## Authentication flow
+## Authentication and reauthentication flow
 
-1. On startup, the worker tries to authenticate using saved session state and configured credentials.
-2. If Apple requires MFA, the worker marks auth as pending and sends a Telegram prompt.
-3. The user replies with `auth <code>` or `reauth <code>`.
-4. If the session has been lost after a restart, the user can send `auth` or `reauth` first to trigger a fresh prompt.
-5. Five days before the configured reauth deadline, the worker sends a reminder.
-6. Two days before the configured reauth deadline, the worker switches to a reauth-required prompt.
+1. On startup, the worker attempts iCloud authentication using saved session
+   state and configured credentials.
+2. If MFA is required, the worker marks auth pending and sends a prompt.
+3. The user sends either `auth <code>` or `reauth <code>` via Telegram to
+   complete the current pending challenge.
+4. `auth <code>` and `reauth <code>` do not start a fresh login attempt; they
+   only validate against the active pending session.
+5. If a worker restart clears in-memory auth session state, send `auth` or
+   `reauth` without a code first to trigger a new challenge prompt.
+6. If successful, pending auth state is cleared and normal backup flow resumes.
 
-## Message headings
+## Reminder and reauth timing
 
-The worker mirrors the `pyiclodoc-drive` message style, but uses `PCD Photos` in the title:
+- When reauthentication is due within five days, the worker sends a reminder.
+- When reauthentication is due within two days, the worker switches to a
+  reauth-required prompt.
+- If reauth is still pending, automatic backup does not proceed until auth is
+  completed.
+
+## Password file behaviour
+
+`<SVC>_ICLOUD_PASSWORD_FILE` can hold either:
+
+- an Apple Account password; or
+- an app-specific password.
+
+The value is passed directly to `pyicloud`, and final auth/MFA handling still
+follows Apple account policy.
+
+## Outbound Telegram messages
+
+Messages use this compact structure:
+
+- bold emoji header in sentence case;
+- one-line action summary including Apple ID; and
+- optional compact status lines.
+
+Current message templates include:
 
 - `*🟢 PCD Photos - Container started*`
 - `*🛑 PCD Photos - Container stopped*`
@@ -39,3 +69,20 @@ The worker mirrors the `pyiclodoc-drive` message style, but uses `PCD Photos` in
 - `*⏭️ PCD Photos - Backup skipped*`
 - `*⚠️ PCD Photos - Safety net blocked*`
 - `*📣 PCD Photos - Reauth reminder*`
+
+Backup completion messages include:
+
+- `Transferred: <done>/<total>`
+- `Skipped: <count>`
+- `Errors: <count>`
+- `Duration: <hh:mm:ss>`
+- `Average speed: <value> MiB/s` only when files were downloaded
+
+Backup start messages include:
+
+- `Scheduled <plain English schedule>`
+- `Manual, then <plain English schedule>`
+
+Safety-net blocked messages include an explicit expected ownership line:
+
+- `Expected: uid <uid>, gid <gid>`
