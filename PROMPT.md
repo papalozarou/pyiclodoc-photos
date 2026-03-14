@@ -34,7 +34,7 @@ Using pyiclodoc-drive as a template, the Docker container must:
 - ensure the safety net is only applied on first run and that the safety net tells the user explicitly the permissions that would match existing files, via Telegram and in the container logs; and
 - use a utility from https://github.com/tarampampam/microcheck as the healthcheck.
 
-# Authentication
+## Authentication
 Using pyiclodoc-drive as a template, for authentication and reauthentication via Telegram the container must:
 
 - prompt on initial run to authenticate with multi-factor authentication;
@@ -42,10 +42,13 @@ Using pyiclodoc-drive as a template, for authentication and reauthentication via
 - prompt the user to reauthenticate using multi-factor authentication when it is required within two days; and
 - allow for authentication and reauthentication edge cases by allowing a user to message Telegram with "<username> auth" or "<username> reauth", where username matches the username within the container.
 
-# Logs
+## Logs
 Using pyiclodoc-drive as a template, three log levels will be provided, info, debug and error. Debug must be comprehensive.
 
-# Supplementart information
+## Project/repository documentation
+Adhering to AGENTS.md, implement comprehensive documentation, splitting out into separate files as required.
+
+## Supplementart information
 Useful supplementary information can be found on other similar projects:
 
 - https://github.com/boredazfcuk/docker-icloudpd
