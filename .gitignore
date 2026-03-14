@@ -10,7 +10,7 @@
 .github/copilot-instructions.md
 .shellcheckrc
 AGENTS.local.md
-CLAUDE.md
+CODE_REVIEW.md
 scratchpad.sh
 test.sh
 TODO.md
