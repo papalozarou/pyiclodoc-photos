@@ -12,7 +12,7 @@ Supported command forms:
 - `<username> reauth`
 - `<username> reauth 123456`
 
-N.B.
+*N.B.*
 
 `<username>` must match the container username for that worker service.
 
