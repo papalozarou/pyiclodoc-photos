@@ -120,6 +120,20 @@ class FakeStatPath:
 
 
 # ------------------------------------------------------------------------------
+# This helper raises from "stat()" to mimic raced or unreadable sample files.
+# ------------------------------------------------------------------------------
+class BrokenStatPath:
+    def __init__(self, LABEL: str):
+        self.label = LABEL
+
+    def stat(self):
+        raise OSError("permission denied")
+
+    def __str__(self) -> str:
+        return self.label
+
+
+# ------------------------------------------------------------------------------
 # These tests verify canonical sync and derived album output behaviour.
 # ------------------------------------------------------------------------------
 class TestSyncer(unittest.TestCase):
@@ -153,6 +167,23 @@ class TestSyncer(unittest.TestCase):
             1000,
             1000,
             LIMIT=1,
+        )
+
+        self.assertEqual(len(RESULT), 1)
+        self.assertIn("/tmp/b", RESULT[0])
+
+# --------------------------------------------------------------------------
+# This test confirms mismatch collection skips files whose metadata cannot be
+# read instead of treating them as fatal sampling failures.
+# --------------------------------------------------------------------------
+    def test_collect_mismatches_skips_stat_failures(self) -> None:
+        RESULT = collect_mismatches(
+            [
+                BrokenStatPath("/tmp/unreadable"),
+                FakeStatPath("/tmp/b", 1001, 1000),
+            ],
+            1000,
+            1000,
         )
 
         self.assertEqual(len(RESULT), 1)

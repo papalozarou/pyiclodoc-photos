@@ -119,7 +119,10 @@ def collect_mismatches(
     MISMATCHES: list[str] = []
 
     for PATH in FILES:
-        FILE_STAT = PATH.stat()
+        try:
+            FILE_STAT = PATH.stat()
+        except OSError:
+            continue
 
         if FILE_STAT.st_uid == EXPECTED_UID and FILE_STAT.st_gid == EXPECTED_GID:
             continue
