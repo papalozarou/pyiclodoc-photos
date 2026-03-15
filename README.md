@@ -22,13 +22,6 @@ When two different assets would otherwise land on the same
 `library/<year>/<month>/<day>/<filename>` path, the worker adds a stable
 suffix before the file extension so one asset cannot overwrite another.
 
-## Example usage
-
-The example `compose.yml` and `.env` files run two isolated workers out of the
-box, Alice and Bob, each with separate config, output, and logs. Those example
-files are intended to be edited directly and should give you enough to get a
-real deployment running.
-
 ## Quick start
 
 1. Copy `compose.yml.example` to `compose.yml`.
@@ -51,6 +44,13 @@ docker compose ps
 docker inspect --format='{{json .State.Health}}' icloud_photos_alice
 docker inspect --format='{{json .State.Health}}' icloud_photos_bob
 ```
+
+## Example usage
+
+The example `compose.yml` and `.env` files run two isolated workers out of the
+box, Alice and Bob, each with separate config, output, and logs. Those example
+files are intended to be edited directly and should give you enough to get a
+real deployment running.
 
 ## What the backup layout looks like
 

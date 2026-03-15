@@ -72,7 +72,7 @@ class ResolvedAssetEntry:
 # surrounding runtime code, even though this implementation targets Photos.
 # ------------------------------------------------------------------------------
 class ICloudDriveClient:
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function stores runtime configuration and initialises client state.
 #
 # 1. "CONFIG" is the runtime configuration model used by this client.
@@ -82,7 +82,7 @@ class ICloudDriveClient:
 # N.B.
 # The client still exposes the last failure reason for compatibility, but the
 # sync layer now consumes explicit per-transfer results instead.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def __init__(self, CONFIG: AppConfig):
         self.config = CONFIG
         self.api: PyiCloudService | None = None
@@ -90,7 +90,7 @@ class ICloudDriveClient:
         self._cached_entries: list[RemoteEntry] = []
         self._cached_assets_by_path: dict[str, Any] = {}
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function aligns cookie and session paths with an
 # icloudpd-compatible folder layout.
 #
@@ -99,13 +99,13 @@ class ICloudDriveClient:
 # N.B.
 # The compat links make it practical to reuse persistent auth artefacts from
 # other pyicloud-based tooling without copying cookie trees by hand.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def prepare_compat_paths(self) -> None:
         self.config.icloudpd_compat_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_link(self.config.icloudpd_compat_dir / "cookies", self.config.cookie_dir)
         self._ensure_link(self.config.icloudpd_compat_dir / "session", self.config.session_dir)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function creates a symlink and removes incompatible existing paths.
 #
 # 1. "LINK_PATH" is the compatibility symlink path.
@@ -116,7 +116,7 @@ class ICloudDriveClient:
 # N.B.
 # Existing non-symlink paths are removed deliberately because mixed real
 # directories and symlinks in the compat tree are harder to debug.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _ensure_link(self, LINK_PATH: Path, TARGET_PATH: Path) -> None:
         if LINK_PATH.is_symlink():
             try:
@@ -133,12 +133,12 @@ class ICloudDriveClient:
 
         LINK_PATH.symlink_to(TARGET_PATH, target_is_directory=True)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function creates a pyicloud client with constructor compatibility
 # across library versions.
 #
 # Returns: Initialised "PyiCloudService" instance.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _create_service(self) -> PyiCloudService:
         return PyiCloudService(
             self.config.icloud_email,
@@ -146,11 +146,11 @@ class ICloudDriveClient:
             cookie_directory=str(self.config.cookie_dir),
         )
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function starts an iCloud authentication attempt.
 #
 # Returns: Tuple "(is_authenticated, details_message)".
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def start_authentication(self) -> tuple[bool, str]:
         self.prepare_compat_paths()
         self.api = self._create_service()
@@ -164,13 +164,13 @@ class ICloudDriveClient:
 
         return True, "Authenticated successfully."
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function completes a pending authentication challenge with an MFA code.
 #
 # 1. "CODE" is the MFA code to validate.
 #
 # Returns: Tuple "(is_authenticated, details_message)".
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def complete_authentication(self, CODE: str) -> tuple[bool, str]:
         if self.api is None:
             return False, "Authentication session is not initialised."
@@ -194,14 +194,14 @@ class ICloudDriveClient:
 
         return True, "Authenticated successfully with trusted 2FA session."
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function authenticates with iCloud and optionally completes MFA.
 #
 # 1. "CODE_PROVIDER" is a zero-argument callable returning an MFA code when
 #    needed.
 #
 # Returns: Tuple "(is_authenticated, details_message)".
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def authenticate(self, CODE_PROVIDER: Callable[[], str]) -> tuple[bool, str]:
         CODE = CODE_PROVIDER().strip()
 
@@ -210,7 +210,7 @@ class ICloudDriveClient:
 
         return self.start_authentication()
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function lists remote photo assets as canonical backup entries.
 #
 # Returns: Flat list of photo entries.
@@ -218,7 +218,7 @@ class ICloudDriveClient:
 # N.B.
 # Album membership is derived separately from the canonical photo listing so
 # the worker can keep one primary copy per asset.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def list_entries(self) -> list[RemoteEntry]:
         if self.api is None:
             return []
@@ -226,7 +226,7 @@ class ICloudDriveClient:
         self._refresh_listing_cache()
         return list(self._cached_entries)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function lists remote photo assets using the configured discovery mode.
 #
 # 1. "MANIFEST" is previous sync metadata used for optional early-stop logic.
@@ -237,7 +237,7 @@ class ICloudDriveClient:
 # "full" keeps the safer complete scan. "until_found" stops scanning
 # "All Photos" after enough consecutive unchanged canonical entries have been
 # observed, using the threshold from "BACKUP_UNTIL_FOUND_COUNT".
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def list_entries_for_sync(
         self,
         MANIFEST: dict[str, dict[str, Any]],
@@ -252,7 +252,7 @@ class ICloudDriveClient:
         self._refresh_listing_cache()
         return list(self._cached_entries)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function rebuilds the listing cache from the current remote state.
 #
 # Returns: None.
@@ -261,7 +261,7 @@ class ICloudDriveClient:
 # The cache stores both the resolved entry list and the canonical-path-to-asset
 # mapping so downloads can reuse one remote listing pass without losing asset
 # identity when canonical paths are disambiguated.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _refresh_listing_cache(self) -> None:
         ALL_ASSETS = self._read_all_assets()
         ALBUM_MAP = self._read_album_membership()
@@ -276,7 +276,7 @@ class ICloudDriveClient:
         self._cached_entries = [ITEM.entry for ITEM in RESOLVED_ENTRIES]
         self._cached_assets_by_path = ASSETS_BY_PATH
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function rebuilds the listing cache using the early-stop discovery
 # mode.
 #
@@ -288,7 +288,7 @@ class ICloudDriveClient:
 # This relies on pyicloud documenting that "All Photos" is sorted by
 # "added_date" with the most recently added assets first. It is therefore an
 # optimisation mode, not the safest default.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _refresh_listing_cache_until_found(
         self,
         MANIFEST: dict[str, dict[str, Any]],
@@ -306,23 +306,23 @@ class ICloudDriveClient:
         self._cached_entries = [ITEM.entry for ITEM in RESOLVED_ENTRIES]
         self._cached_assets_by_path = ASSETS_BY_PATH
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function clears cached remote-listing state after auth changes.
 #
 # Returns: None.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _clear_listing_cache(self) -> None:
         self._cached_entries = []
         self._cached_assets_by_path = {}
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function builds base remote entries before collision resolution.
 #
 # 1. "ALL_ASSETS" is the full photo asset list.
 # 2. "ALBUM_MAP" maps asset IDs to album output paths.
 #
 # Returns: Entry-and-asset bindings using the readable default layout.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _build_remote_entries(
         self,
         ALL_ASSETS: list[Any],
@@ -340,7 +340,7 @@ class ICloudDriveClient:
 
         return RESULT
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function resolves canonical-path collisions across built entries.
 #
 # 1. "ENTRIES" is the base resolved entry-and-asset list.
@@ -352,7 +352,7 @@ class ICloudDriveClient:
 # Distinct assets can legitimately share the same day and original filename.
 # When that happens, every colliding entry receives a stable suffix derived
 # from asset identity and keeps its original asset binding.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _resolve_entry_path_collisions(
         self,
         ENTRIES: list[ResolvedAssetEntry],
@@ -375,13 +375,13 @@ class ICloudDriveClient:
 
         return RESULT
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function rewrites one colliding entry group to unique stable paths.
 #
 # 1. "ENTRIES" is the colliding resolved entry-and-asset group.
 #
 # Returns: Entry-and-asset list with suffixes applied in a stable order.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _disambiguate_entry_group(self, ENTRIES: list[ResolvedAssetEntry]) -> list[ResolvedAssetEntry]:
         RESULT: list[ResolvedAssetEntry] = []
         SORTED_ENTRIES = sorted(
@@ -417,7 +417,7 @@ class ICloudDriveClient:
 
         return RESULT
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function adds a stable collision suffix to a file name.
 #
 # 1. "FILE_NAME" is the original or sanitised file name.
@@ -430,20 +430,20 @@ class ICloudDriveClient:
 # the worker must fall back to a synthetic identifier, the suffix remains
 # deterministic for that observed listing but may change if upstream ordering
 # changes.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _add_collision_suffix(self, FILE_NAME: str, ASSET_ID: str) -> str:
         BASE_NAME, FILE_SUFFIX = os.path.splitext(FILE_NAME)
         SUFFIX_DIGEST = hashlib.sha1(ASSET_ID.encode("utf-8")).hexdigest()[:12]
         return f"{BASE_NAME}--{SUFFIX_DIGEST}{FILE_SUFFIX}"
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function replaces the trailing file name in a relative path.
 #
 # 1. "RELATIVE_PATH" is the relative output path.
 # 2. "FILE_NAME" is the replacement file name.
 #
 # Returns: Relative path with the new trailing file name applied.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _replace_file_name(self, RELATIVE_PATH: str, FILE_NAME: str) -> str:
         PARENT_TEXT = str(Path(RELATIVE_PATH).parent).replace("\\", "/")
 
@@ -452,7 +452,7 @@ class ICloudDriveClient:
 
         return f"{PARENT_TEXT}/{FILE_NAME}"
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function downloads one asset into the canonical library tree.
 #
 # 1. "REMOTE_PATH" is the canonical relative output path.
@@ -464,7 +464,7 @@ class ICloudDriveClient:
 # 1. Keeps the final destination untouched unless the full download succeeds.
 # 2. Returns a concrete failure token instead of relying on shared mutable
 #    state for concurrent callers.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
         if self.api is None:
             return self._set_download_failure_result("not_authenticated")
@@ -505,7 +505,7 @@ class ICloudDriveClient:
         self._last_download_failure_reason = ""
         return DownloadResult(True, written_bytes=WRITTEN_BYTES)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function downloads one asset into the canonical library tree.
 #
 # 1. "REMOTE_PATH" is the canonical relative output path.
@@ -515,39 +515,39 @@ class ICloudDriveClient:
 # 
 # Failure behaviour:
 # 1. Preserves the historic boolean return contract for compatibility.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
         return self.download_file_result(REMOTE_PATH, LOCAL_PATH).success
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function stores a failure result and mirrors it to compatibility state.
 #
 # 1. "FAILURE_REASON" is the short result token for the failed transfer.
 #
 # Returns: Failed "DownloadResult" value.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _set_download_failure_result(self, FAILURE_REASON: str) -> DownloadResult:
         self._last_download_failure_reason = FAILURE_REASON
         return DownloadResult(False, failure_reason=FAILURE_REASON)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns a temporary sibling path for an in-progress download.
 #
 # 1. "LOCAL_PATH" is the final canonical destination path.
 #
 # Returns: Temporary sibling path used until download success is confirmed.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _get_temporary_download_path(self, LOCAL_PATH: Path) -> Path:
         return LOCAL_PATH.with_name(f".{LOCAL_PATH.name}.tmp")
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function writes download content to a temporary file and counts bytes.
 #
 # 1. "DOWNLOAD_HANDLE" is a response-like object or byte payload.
 # 2. "TEMP_PATH" is the temporary output path.
 #
 # Returns: Total byte count written to the temporary file.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _write_download_to_temp_file(self, DOWNLOAD_HANDLE: Any, TEMP_PATH: Path) -> int:
         WRITTEN_BYTES = 0
 
@@ -563,14 +563,14 @@ class ICloudDriveClient:
 
         return WRITTEN_BYTES
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function validates the written byte count against expected asset size.
 #
 # 1. "WRITTEN_BYTES" is the completed temporary-file byte count.
 # 2. "EXPECTED_SIZE" is the declared remote asset size.
 #
 # Returns: Failure reason token, or an empty string on success.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _validate_download_size(self, WRITTEN_BYTES: int, EXPECTED_SIZE: int) -> str:
         if WRITTEN_BYTES == 0:
             return "empty_download"
@@ -580,13 +580,13 @@ class ICloudDriveClient:
 
         return ""
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function removes a temporary download file when it exists.
 #
 # 1. "TEMP_PATH" is the temporary output path.
 #
 # Returns: None.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _cleanup_download_temp_file(self, TEMP_PATH: Path) -> None:
         try:
             TEMP_PATH.unlink()
@@ -595,37 +595,37 @@ class ICloudDriveClient:
         except OSError:
             return
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function keeps package-style transfer API compatibility.
 #
 # 1. "REMOTE_PATH" is the canonical relative output path.
 # 2. "LOCAL_PATH" is the full destination file path.
 #
 # Returns: True on success, otherwise False.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def download_package_tree(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
         return self.download_file(REMOTE_PATH, LOCAL_PATH)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns the last download failure reason token.
 #
 # Returns: Short diagnostic token for sync failure reporting.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def get_last_download_failure_reason(self) -> str:
         return self._last_download_failure_reason
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function reads the pyicloud photos service safely.
 #
 # Returns: Photos service object when available, otherwise None.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _get_photos_service(self) -> Any | None:
         if self.api is None:
             return None
 
         return getattr(self.api, "photos", None)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns all assets from the main photos collection.
 #
 # Returns: List of remote asset objects.
@@ -633,7 +633,7 @@ class ICloudDriveClient:
 # N.B.
 # Pyicloud Photos collection names vary across versions, so the lookup tries
 # several common collection entry points before giving up.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _read_all_assets(self) -> list[Any]:
         PHOTOS = self._get_photos_service()
 
@@ -647,14 +647,14 @@ class ICloudDriveClient:
 
         return []
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns assets from "All Photos" with optional early-stop
 # behaviour.
 #
 # 1. "MANIFEST" is previous sync metadata used to detect unchanged streaks.
 #
 # Returns: Ordered list of remote asset objects to normalise for this run.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _read_all_assets_until_found(self, MANIFEST: dict[str, dict[str, Any]]) -> list[Any]:
         PHOTOS = self._get_photos_service()
 
@@ -690,7 +690,7 @@ class ICloudDriveClient:
 
         return RESULT
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns derived album membership keyed by asset identifier.
 #
 # Returns: Mapping from asset identifier to sanitised album-path tuple.
@@ -698,7 +698,7 @@ class ICloudDriveClient:
 # N.B.
 # Album membership is reduced to relative output paths here so the sync layer
 # does not need to understand pyicloud album objects directly.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _read_album_membership(self) -> dict[str, tuple[str, ...]]:
         if not self.config.backup_albums_enabled:
             return {}
@@ -726,7 +726,7 @@ class ICloudDriveClient:
 
         return RESULT
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function creates a stable remote entry from one pyicloud asset object.
 #
 # 1. "ASSET" is the pyicloud photo object.
@@ -738,7 +738,7 @@ class ICloudDriveClient:
 # Behaviour notes:
 # 1. The canonical path is always built under the configured library root.
 # 2. Album paths are attached as derived metadata only.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _build_remote_entry(
         self,
         ASSET: Any,
@@ -764,13 +764,13 @@ class ICloudDriveClient:
             album_paths=ALBUM_PATHS,
         )
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns candidate "all assets" collections from pyicloud.
 #
 # 1. "PHOTOS" is the pyicloud photos service object.
 #
 # Returns: Ordered candidate iterable objects.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _candidate_all_assets(self, PHOTOS: Any) -> tuple[Any, ...]:
         ALBUMS = self._normalise_album_mapping(getattr(PHOTOS, "albums", {}))
         return (
@@ -780,7 +780,7 @@ class ICloudDriveClient:
             ALBUMS.get("Recents"),
         )
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function converts album containers into a predictable mapping.
 #
 # 1. "ALBUMS" is a pyicloud album container or dictionary.
@@ -790,7 +790,7 @@ class ICloudDriveClient:
 # N.B.
 # Some pyicloud versions expose dict-like album containers rather than plain
 # dictionaries, so this function flattens those interfaces early.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _normalise_album_mapping(self, ALBUMS: Any) -> dict[str, Any]:
         if isinstance(ALBUMS, dict):
             return ALBUMS
@@ -803,7 +803,7 @@ class ICloudDriveClient:
 
         return {}
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function materialises pyicloud asset iterables into a list.
 #
 # 1. "SOURCE" is an asset collection object.
@@ -813,7 +813,7 @@ class ICloudDriveClient:
 # N.B.
 # The function intentionally swallows type mismatches because the caller uses
 # an empty list as the uniform "not available" contract.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _materialise_assets(self, SOURCE: Any) -> list[Any]:
         if SOURCE is None:
             return []
@@ -829,14 +829,14 @@ class ICloudDriveClient:
         except TypeError:
             return []
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function yields assets from a pyicloud collection without forcing a
 # full list conversion up front.
 #
 # 1. "SOURCE" is an asset collection object.
 #
 # Returns: Iterator of asset objects.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _materialise_asset_iterable(self, SOURCE: Any):
         if SOURCE is None:
             return iter(())
@@ -852,7 +852,7 @@ class ICloudDriveClient:
         except TypeError:
             return iter(())
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function decides whether a named album should be backed up.
 #
 # 1. "ALBUM_NAME" is the raw remote album name.
@@ -862,7 +862,7 @@ class ICloudDriveClient:
 # N.B.
 # "All Photos" is excluded because the canonical library tree already covers
 # the full asset set and a duplicate album tree would add no value.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _should_include_album(self, ALBUM_NAME: str) -> bool:
         CLEAN_NAME = ALBUM_NAME.strip()
 
@@ -883,7 +883,7 @@ class ICloudDriveClient:
 
         return True
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns the stable identifier for one asset.
 #
 # 1. "ASSET" is the pyicloud asset object.
@@ -894,7 +894,7 @@ class ICloudDriveClient:
 # N.B.
 # When pyicloud does not expose a durable remote identifier, the fallback hash
 # is only intended to keep one local run stable enough for manifesting.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _asset_identifier(self, ASSET: Any, INDEX: int) -> str:
         for ATTRIBUTE in ("id", "photo_guid", "guid", "record_name", "recordName"):
             VALUE = getattr(ASSET, ATTRIBUTE, "")
@@ -913,7 +913,7 @@ class ICloudDriveClient:
         )
         return hashlib.sha1(DIGEST_SOURCE.encode("utf-8")).hexdigest()
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns a stable filename for one asset.
 #
 # 1. "ASSET" is the pyicloud asset object.
@@ -924,7 +924,7 @@ class ICloudDriveClient:
 # N.B.
 # The fallback name keeps a common image suffix so exported files remain easy
 # to inspect even when the remote metadata is sparse.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _asset_file_name(self, ASSET: Any, ASSET_ID: str) -> str:
         for ATTRIBUTE in ("filename", "name"):
             VALUE = getattr(ASSET, ATTRIBUTE, "")
@@ -934,7 +934,7 @@ class ICloudDriveClient:
 
         return f"{ASSET_ID}.jpg"
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function sanitises user-visible filenames for filesystem storage.
 #
 # 1. "NAME" is the source filename.
@@ -944,7 +944,7 @@ class ICloudDriveClient:
 # N.B.
 # This sanitiser is intentionally conservative and filesystem-oriented. It does
 # not try to preserve every original Unicode code point.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _sanitize_file_name(self, NAME: str) -> str:
         CLEAN_NAME = FILE_NAME_SANITISE_PATTERN.sub("_", NAME).strip(" .")
 
@@ -953,13 +953,13 @@ class ICloudDriveClient:
 
         return "asset.jpg"
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns the asset creation timestamp as an ISO string.
 #
 # 1. "ASSET" is the pyicloud asset object.
 #
 # Returns: ISO timestamp string.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _asset_created(self, ASSET: Any) -> str:
         for ATTRIBUTE in ("created", "created_at", "date_created"):
             VALUE = getattr(ASSET, ATTRIBUTE, None)
@@ -969,14 +969,14 @@ class ICloudDriveClient:
 
         return "1970-01-01T00:00:00+00:00"
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns the asset modified timestamp as an ISO string.
 #
 # 1. "ASSET" is the pyicloud asset object.
 # 2. "DEFAULT_VALUE" is used when no explicit modified timestamp exists.
 #
 # Returns: ISO timestamp string.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _asset_modified(self, ASSET: Any, DEFAULT_VALUE: str) -> str:
         for ATTRIBUTE in ("modified", "modified_at", "date_modified"):
             VALUE = getattr(ASSET, ATTRIBUTE, None)
@@ -986,13 +986,13 @@ class ICloudDriveClient:
 
         return DEFAULT_VALUE
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function converts a datetime-like object into ISO text.
 #
 # 1. "VALUE" is a datetime-like object or string.
 #
 # Returns: ISO string when conversion is possible, otherwise empty string.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _datetime_to_iso(self, VALUE: Any) -> str:
         if VALUE is None:
             return ""
@@ -1010,13 +1010,13 @@ class ICloudDriveClient:
 
         return ""
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns the declared asset size in bytes.
 #
 # 1. "ASSET" is the pyicloud asset object.
 #
 # Returns: Non-negative byte count.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _asset_size(self, ASSET: Any) -> int:
         for ATTRIBUTE in ("size", "file_size", "item_size"):
             VALUE = getattr(ASSET, ATTRIBUTE, None)
@@ -1025,26 +1025,26 @@ class ICloudDriveClient:
 
         return 0
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function builds the canonical year/month/day output path.
 #
 # 1. "CREATED" is ISO creation timestamp.
 # 2. "FILE_NAME" is the source filename.
 #
 # Returns: Relative output path under the library root.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _canonical_relative_path(self, CREATED: str, FILE_NAME: str) -> str:
         DATE_TEXT = CREATED.split("T", maxsplit=1)[0]
         YEAR_TEXT, MONTH_TEXT, DAY_TEXT = self._safe_date_parts(DATE_TEXT)
         return "/".join([self.config.backup_root_library, YEAR_TEXT, MONTH_TEXT, DAY_TEXT, FILE_NAME])
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function returns safe date parts from an ISO date string.
 #
 # 1. "DATE_TEXT" is a "YYYY-MM-DD" date-like string.
 #
 # Returns: Tuple "(year, month, day)".
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _safe_date_parts(self, DATE_TEXT: str) -> tuple[str, str, str]:
         PARTS = DATE_TEXT.split("-")
 
@@ -1064,18 +1064,18 @@ class ICloudDriveClient:
 
         return (YEAR_TEXT.zfill(4), MONTH_TEXT.zfill(2), DAY_TEXT.zfill(2))
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function converts an album name into a relative album path.
 #
 # 1. "ALBUM_NAME" is the source album name.
 #
 # Returns: Relative output path under the albums root.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _album_relative_path(self, ALBUM_NAME: str) -> str:
         SAFE_NAME = self._sanitize_file_name(ALBUM_NAME).replace("/", "_")
         return "/".join([self.config.backup_root_albums, SAFE_NAME])
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function resolves one asset object from a canonical remote path.
 #
 # 1. "REMOTE_PATH" is the canonical output path generated by this worker.
@@ -1085,7 +1085,7 @@ class ICloudDriveClient:
 # N.B.
 # This is a linear lookup over the current remote asset list. That is
 # acceptable for now because it keeps the client logic simple.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _get_asset_by_remote_path(self, REMOTE_PATH: str) -> Any | None:
         if REMOTE_PATH in self._cached_assets_by_path:
             return self._cached_assets_by_path[REMOTE_PATH]
@@ -1093,7 +1093,7 @@ class ICloudDriveClient:
         self._refresh_listing_cache()
         return self._cached_assets_by_path.get(REMOTE_PATH)
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function opens an asset download handle with broad pyicloud
 # compatibility.
 #
@@ -1104,7 +1104,7 @@ class ICloudDriveClient:
 # N.B.
 # Pyicloud response methods are inconsistent across versions, so this probes a
 # few common call shapes before declaring the asset undownloadable.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _open_asset_download(self, ASSET: Any) -> Any | None:
         for METHOD_NAME in ("download", "open", "download_original"):
             METHOD = getattr(ASSET, METHOD_NAME, None)
@@ -1123,7 +1123,7 @@ class ICloudDriveClient:
 
         return None
 
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # This function yields bytes from a pyicloud download handle.
 #
 # 1. "DOWNLOAD_HANDLE" is a response-like object or byte payload.
@@ -1133,7 +1133,7 @@ class ICloudDriveClient:
 # Failure behaviour:
 # 1. Supports several response shapes used by pyicloud and requests objects.
 # 2. Raises when no supported payload interface exists.
-# --------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
     def _iter_download_chunks(self, DOWNLOAD_HANDLE: Any):
         if isinstance(DOWNLOAD_HANDLE, bytes):
             yield DOWNLOAD_HANDLE
