@@ -6,6 +6,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tests._stubs import install_dependency_stubs
 
@@ -13,7 +14,8 @@ install_dependency_stubs()
 
 from app.config import AppConfig
 from app.state import AuthState
-from app.telegram_control import handle_command
+from app.telegram_bot import TelegramConfig
+from app.telegram_control import handle_command, process_commands
 
 
 # ------------------------------------------------------------------------------
@@ -60,6 +62,40 @@ def create_config(ROOT_DIR: Path) -> AppConfig:
 # These tests verify extracted Telegram command logic.
 # ------------------------------------------------------------------------------
 class TestTelegramControl(unittest.TestCase):
+# --------------------------------------------------------------------------
+# This test confirms command polling preserves the existing offset when no
+# Telegram updates are available.
+# --------------------------------------------------------------------------
+    def test_process_commands_returns_existing_offset_when_no_updates_exist(self) -> None:
+        TELEGRAM = TelegramConfig(bot_token="token", chat_id="1")
+
+        with patch("app.telegram_control.fetch_updates", return_value=[]):
+            COMMANDS, NEXT_OFFSET = process_commands(TELEGRAM, "alice", 10)
+
+        self.assertEqual(COMMANDS, [])
+        self.assertEqual(NEXT_OFFSET, 10)
+
+# --------------------------------------------------------------------------
+# This test confirms command polling advances the offset and filters invalid
+# updates out of the returned command list.
+# --------------------------------------------------------------------------
+    def test_process_commands_collects_valid_commands_and_advances_offset(self) -> None:
+        TELEGRAM = TelegramConfig(bot_token="token", chat_id="1")
+        UPDATES = [
+            {"update_id": 4, "message": {"text": "ignore"}},
+            {"update_id": 7, "message": {"text": "command"}},
+        ]
+
+        with patch("app.telegram_control.fetch_updates", return_value=UPDATES):
+            with patch(
+                "app.telegram_control.parse_command",
+                side_effect=[None, type("Event", (), {"command": "backup", "args": ""})()],
+            ):
+                COMMANDS, NEXT_OFFSET = process_commands(TELEGRAM, "alice", None)
+
+        self.assertEqual(COMMANDS, [("backup", "")])
+        self.assertEqual(NEXT_OFFSET, 8)
+
 # --------------------------------------------------------------------------
 # This test confirms a backup command returns backup intent and sends the
 # request message.
@@ -110,3 +146,60 @@ class TestTelegramControl(unittest.TestCase):
         self.assertTrue(OUTCOME.auth_state.auth_pending)
         self.assertFalse(OUTCOME.backup_requested)
         self.assertIn("Authentication required", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms a manual reauth prompt updates state and emits the
+# reauth message without marking a backup request.
+# --------------------------------------------------------------------------
+    def test_handle_command_marks_reauth_pending_without_code(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            ROOT_DIR = Path(TMPDIR)
+            CONFIG = create_config(ROOT_DIR)
+            CONFIG.config_dir.mkdir(parents=True, exist_ok=True)
+            AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+            SENT_MESSAGES: list[str] = []
+
+            OUTCOME = handle_command(
+                "reauth",
+                "",
+                CONFIG,
+                AUTH_STATE,
+                False,
+                SENT_MESSAGES.append,
+                lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, False, PROVIDED_CODE),
+            )
+
+        self.assertTrue(OUTCOME.auth_state.reauth_pending)
+        self.assertFalse(OUTCOME.backup_requested)
+        self.assertIn("Reauthentication required", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms auth commands with a code delegate to the auth executor
+# and return its details.
+# --------------------------------------------------------------------------
+    def test_handle_command_delegates_to_auth_executor_when_args_are_present(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            ROOT_DIR = Path(TMPDIR)
+            CONFIG = create_config(ROOT_DIR)
+            AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", True, False, "none")
+            SENT_MESSAGES: list[str] = []
+            RETURNED_STATE = AuthState("2026-03-15T11:00:00+00:00", False, False, "none")
+
+            OUTCOME = handle_command(
+                "auth",
+                "123456",
+                CONFIG,
+                AUTH_STATE,
+                False,
+                SENT_MESSAGES.append,
+                lambda CURRENT_STATE, PROVIDED_CODE: (
+                    RETURNED_STATE,
+                    True,
+                    f"used:{PROVIDED_CODE}",
+                ),
+            )
+
+        self.assertEqual(OUTCOME.auth_state, RETURNED_STATE)
+        self.assertTrue(OUTCOME.is_authenticated)
+        self.assertEqual(OUTCOME.details, "used:123456")
+        self.assertEqual(SENT_MESSAGES, [])
