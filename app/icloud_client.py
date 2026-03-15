@@ -77,6 +77,8 @@ class ICloudDriveClient:
         self.config = CONFIG
         self.api: PyiCloudService | None = None
         self._last_download_failure_reason = ""
+        self._cached_entries: list[RemoteEntry] = []
+        self._cached_assets_by_path: dict[str, Any] = {}
 
 # --------------------------------------------------------------------------
 # This function aligns cookie and session paths with an
@@ -142,6 +144,7 @@ class ICloudDriveClient:
     def start_authentication(self) -> tuple[bool, str]:
         self.prepare_compat_paths()
         self.api = self._create_service()
+        self._clear_listing_cache()
 
         if self.api.requires_2fa:
             return False, "Two-factor code is required."
@@ -210,13 +213,40 @@ class ICloudDriveClient:
         if self.api is None:
             return []
 
+        self._refresh_listing_cache()
+        return list(self._cached_entries)
+
+# --------------------------------------------------------------------------
+# This function rebuilds the listing cache from the current remote state.
+#
+# Returns: None.
+#
+# N.B.
+# The cache stores both the resolved entry list and the canonical-path-to-asset
+# mapping so downloads can reuse one remote listing pass.
+# --------------------------------------------------------------------------
+    def _refresh_listing_cache(self) -> None:
         ALL_ASSETS = self._read_all_assets()
         ALBUM_MAP = self._read_album_membership()
-        RESULT = self._build_remote_entries(ALL_ASSETS, ALBUM_MAP)
-        RESULT = self._resolve_entry_path_collisions(RESULT)
+        BASE_ENTRIES = self._build_remote_entries(ALL_ASSETS, ALBUM_MAP)
+        RESOLVED_ENTRIES = self._resolve_entry_path_collisions(BASE_ENTRIES)
+        ASSETS_BY_PATH: dict[str, Any] = {}
 
-        RESULT.sort(key=lambda ENTRY: ENTRY.path)
-        return RESULT
+        for ENTRY, ASSET in zip(RESOLVED_ENTRIES, ALL_ASSETS):
+            ASSETS_BY_PATH[ENTRY.path] = ASSET
+
+        RESOLVED_ENTRIES.sort(key=lambda ENTRY: ENTRY.path)
+        self._cached_entries = RESOLVED_ENTRIES
+        self._cached_assets_by_path = ASSETS_BY_PATH
+
+# --------------------------------------------------------------------------
+# This function clears cached remote-listing state after auth changes.
+#
+# Returns: None.
+# --------------------------------------------------------------------------
+    def _clear_listing_cache(self) -> None:
+        self._cached_entries = []
+        self._cached_assets_by_path = {}
 
 # --------------------------------------------------------------------------
 # This function builds base remote entries before collision resolution.
@@ -902,12 +932,11 @@ class ICloudDriveClient:
 # acceptable for now because it keeps the client logic simple.
 # --------------------------------------------------------------------------
     def _get_asset_by_remote_path(self, REMOTE_PATH: str) -> Any | None:
-        for INDEX, ASSET in enumerate(self._read_all_assets(), start=1):
-            ENTRY = self._build_remote_entry(ASSET, INDEX, {})
-            if ENTRY.path == REMOTE_PATH:
-                return ASSET
+        if REMOTE_PATH in self._cached_assets_by_path:
+            return self._cached_assets_by_path[REMOTE_PATH]
 
-        return None
+        self._refresh_listing_cache()
+        return self._cached_assets_by_path.get(REMOTE_PATH)
 
 # --------------------------------------------------------------------------
 # This function opens an asset download handle with broad pyicloud

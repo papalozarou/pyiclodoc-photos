@@ -40,6 +40,19 @@ class BrokenChunkHandle:
 
 
 # ------------------------------------------------------------------------------
+# This client test double counts full asset-list reads for cache assertions.
+# ------------------------------------------------------------------------------
+class CountingIcloudClient(ICloudDriveClient):
+    def __init__(self, CONFIG: AppConfig):
+        super().__init__(CONFIG)
+        self.read_all_assets_calls = 0
+
+    def _read_all_assets(self) -> list[object]:
+        self.read_all_assets_calls += 1
+        return super()._read_all_assets()
+
+
+# ------------------------------------------------------------------------------
 # This function builds a minimal app config for client tests.
 # ------------------------------------------------------------------------------
 def create_config() -> AppConfig:
@@ -222,3 +235,43 @@ class TestIcloudClient(unittest.TestCase):
             self.assertEqual(CLIENT.get_last_download_failure_reason(), "download_read_failed")
             self.assertEqual(LOCAL_PATH.read_bytes(), b"existing")
             self.assertFalse((LOCAL_PATH.parent / ".IMG_0001.JPG.tmp").exists())
+
+# --------------------------------------------------------------------------
+# This test confirms repeated downloads reuse the resolved listing cache
+# instead of re-reading the full asset collection for each path lookup.
+# --------------------------------------------------------------------------
+    def test_download_file_reuses_listing_cache_for_asset_lookup(self) -> None:
+        CLIENT = CountingIcloudClient(create_config())
+        FIRST_ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+            download=lambda: ChunkHandle([b"data"]),
+        )
+        SECOND_ASSET = SimpleNamespace(
+            id="asset-2",
+            filename="IMG_0002.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 10, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 10, 31, tzinfo=timezone.utc),
+            download=lambda: ChunkHandle([b"more"]),
+        )
+        CLIENT.api = SimpleNamespace(
+            photos=SimpleNamespace(
+                all=[FIRST_ASSET, SECOND_ASSET],
+                albums={},
+            )
+        )
+
+        ENTRIES = CLIENT.list_entries()
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            FIRST_PATH = Path(TMPDIR) / ENTRIES[0].path
+            SECOND_PATH = Path(TMPDIR) / ENTRIES[1].path
+
+            self.assertTrue(CLIENT.download_file(ENTRIES[0].path, FIRST_PATH))
+            self.assertTrue(CLIENT.download_file(ENTRIES[1].path, SECOND_PATH))
+
+        self.assertEqual(CLIENT.read_all_assets_calls, 1)
