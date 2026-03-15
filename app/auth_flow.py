@@ -135,6 +135,9 @@ def process_reauth_reminders(
     DAYS_LEFT = get_reauth_days_left(AUTH_STATE.last_auth_utc, INTERVAL_DAYS)
 
     if DAYS_LEFT > 5:
+        if AUTH_STATE.reminder_stage == "none" and not AUTH_STATE.reauth_pending:
+            return AUTH_STATE
+
         NEW_STATE = replace(AUTH_STATE, reminder_stage="none", reauth_pending=False)
         save_auth_state(AUTH_STATE_PATH, NEW_STATE)
         return NEW_STATE

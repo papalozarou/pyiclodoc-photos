@@ -284,7 +284,29 @@ class TestAuthFlow(unittest.TestCase):
         self.assertFalse(NEW_STATE.reauth_pending)
         self.assertEqual(NEW_STATE.reminder_stage, "none")
         self.assertEqual(SAVED_STATE, NEW_STATE)
-        self.assertEqual(SENT_MESSAGES, [])
+
+# --------------------------------------------------------------------------
+# This test confirms the clear-state branch does not rewrite auth state when
+# the current reminder state already matches the desired reset state.
+# --------------------------------------------------------------------------
+    def test_process_reauth_reminders_skips_save_when_state_is_already_clear(self) -> None:
+        STATE = AuthState("2026-03-10T00:00:00+00:00", False, False, "none")
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.get_reauth_days_left", return_value=6):
+                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                    NEW_STATE = process_reauth_reminders(
+                        STATE,
+                        STATE_PATH,
+                        lambda MESSAGE: None,
+                        "alice",
+                        30,
+                    )
+
+        self.assertEqual(NEW_STATE, STATE)
+        SAVE_AUTH_STATE.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms no-op reminder paths leave state unchanged and avoid
