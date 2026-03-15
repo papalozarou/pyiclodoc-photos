@@ -87,6 +87,15 @@ class SelectiveClient(FakeClient):
 
 
 # ------------------------------------------------------------------------------
+# This class raises from the download call to exercise worker exception paths.
+# ------------------------------------------------------------------------------
+class ExplodingClient(FakeClient):
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
+        _ = (REMOTE_PATH, LOCAL_PATH)
+        raise RuntimeError("boom")
+
+
+# ------------------------------------------------------------------------------
 # These tests verify canonical sync and derived album output behaviour.
 # ------------------------------------------------------------------------------
 class TestSyncer(unittest.TestCase):
@@ -387,6 +396,47 @@ class TestSyncer(unittest.TestCase):
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertEqual(SUMMARY.error_files, 2)
             self.assertIn("Transfer failure reason detail: timeout=1, write_failed=1", LOG_TEXT)
+
+# --------------------------------------------------------------------------
+# This test confirms worker exceptions are counted once through the shared
+# failure aggregation path.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_counts_worker_exception_once(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0007.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-7",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0007.JPG",
+        )
+        CLIENT = ExplodingClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+
+            self.addCleanup(self._restore_log_level)
+            self._set_debug_logging()
+
+            SUMMARY, _ = perform_incremental_sync(
+                CLIENT,
+                Path(TMPDIR),
+                {},
+                LOG_FILE=LOG_FILE,
+            )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertEqual(SUMMARY.error_files, 1)
+            self.assertIn(
+                "File transfer worker failed: library/2026/03/14/IMG_0007.JPG "
+                "(RuntimeError: boom)",
+                LOG_TEXT,
+            )
+            self.assertIn(
+                "Transfer failure reason detail: worker_exception:RuntimeError=1",
+                LOG_TEXT,
+            )
 
 # --------------------------------------------------------------------------
 # This helper sets debug logging for syncer log assertions.

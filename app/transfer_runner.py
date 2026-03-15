@@ -93,6 +93,35 @@ def transfer_if_required(
 
 
 # ------------------------------------------------------------------------------
+# This function records one failed canonical transfer outcome.
+#
+# 1. "ENTRY" is the remote file metadata for the failed transfer.
+# 2. "RESULT" is the authoritative failed transfer result.
+# 3. "FAILURE_REASON_COUNTS" is the shared per-run reason counter mapping.
+# 4. "LOG_FILE" is optional worker log destination.
+#
+# Returns: Failure reason string recorded for the transfer.
+#
+# N.B.
+# All failure aggregation passes through this function so worker exceptions and
+# normal failed results cannot drift into separate counting paths.
+# ------------------------------------------------------------------------------
+def record_failed_transfer(
+    ENTRY: RemoteEntry,
+    RESULT: DownloadResult,
+    FAILURE_REASON_COUNTS: dict[str, int],
+    LOG_FILE: Path | None,
+) -> str:
+    REASON = RESULT.failure_reason or "unknown_error"
+    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
+
+    if LOG_FILE is not None:
+        log_line(LOG_FILE, "error", f"File transfer failed: {ENTRY.path} ({REASON})")
+
+    return REASON
+
+
+# ------------------------------------------------------------------------------
 # This function executes parallel canonical-file transfers.
 #
 # 1. "CLIENT" is the active iCloud API wrapper.
@@ -149,8 +178,6 @@ def run_transfers(
                         False,
                         failure_reason=f"worker_exception:{type(ERROR).__name__}",
                     )
-                    REASON = f"worker_exception:{type(ERROR).__name__}"
-                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                     if LOG_FILE is not None:
                         log_line(
                             LOG_FILE,
@@ -173,10 +200,12 @@ def run_transfers(
                     continue
 
                 ERRORS += 1
-                REASON = RESULT.failure_reason or "unknown_error"
-                FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
-                if LOG_FILE is not None:
-                    log_line(LOG_FILE, "error", f"File transfer failed: {ENTRY.path} ({REASON})")
+                record_failed_transfer(
+                    ENTRY,
+                    RESULT,
+                    FAILURE_REASON_COUNTS,
+                    LOG_FILE,
+                )
 
             NOW_EPOCH = time.monotonic()
 
