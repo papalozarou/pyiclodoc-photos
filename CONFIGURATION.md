@@ -28,7 +28,7 @@ These are usually left as-is unless you need explicit UID or GID mapping.
 - Entrypoint starts as root only to read secrets, then drops to `PUID:PGID`
   before starting the worker.
 
-N.B.
+*N.B.*
 
 If `/output` already contains files with different ownership, the first-run
 safety net can block backup. When that happens, the worker tells you the
@@ -54,29 +54,33 @@ These are shared by all services in the example stack.
 
 ### Paths and secrets
 
-- `<SVC>_CONFIG_PATH`: host path mounted to `/config`.
-- `<SVC>_OUTPUT_PATH`: host path mounted to `/output`.
-- `<SVC>_LOGS_PATH`: host path mounted to `/logs`.
-- `<SVC>_TGM_BOT_TOKEN_FILE`: Telegram bot token file path.
-- `<SVC>_ICLOUD_EMAIL_FILE`: iCloud email file path.
-- `<SVC>_ICLOUD_PASSWORD_FILE`: iCloud password file path.
+| Variable name | Possible values | `.env.example` |
+| --- | --- | --- |
+| `<SVC>_CONFIG_PATH` | Host path | `ALICE_CONFIG_PATH` |
+| `<SVC>_OUTPUT_PATH` | Host path | `ALICE_OUTPUT_PATH` |
+| `<SVC>_LOGS_PATH` | Host path | `ALICE_LOGS_PATH` |
+| `<SVC>_TGM_BOT_TOKEN_FILE` | Container secret-file path | `ALICE_TGM_BOT_TOKEN_FILE` |
+| `<SVC>_ICLOUD_EMAIL_FILE` | Container secret-file path | `ALICE_ICLOUD_EMAIL_FILE` |
+| `<SVC>_ICLOUD_PASSWORD_FILE` | Container secret-file path | `ALICE_ICLOUD_PASSWORD_FILE` |
 
 ### Scheduling and runtime behaviour
 
-- `<SVC>_RUN_ONCE`: run one backup pass and exit (`true` or `false`).
-- `<SVC>_SCHEDULE_MODE`: `interval`, `daily`, `weekly`, `twice_weekly`, or
-  `monthly`.
-- `<SVC>_SCHEDULE_BACKUP_TIME`: local run time in `HH:MM` 24-hour format.
-- `<SVC>_SCHEDULE_WEEKDAYS`: comma-separated weekday names. Use one day for
-  `weekly`, two distinct days for `twice_weekly`, and one day for `monthly`.
-- `<SVC>_SCHEDULE_MONTHLY_WEEK`: one of `first`, `second`, `third`, `fourth`,
-  `last`.
-- `<SVC>_SCHEDULE_INTERVAL_MINUTES`: interval run spacing in minutes.
-- `<SVC>_REAUTH_INTERVAL_DAYS`: reauthentication window in days.
-- `<SVC>_RESTART_POLICY`: Compose restart policy for the service, for example
-  `unless-stopped` or `no`.
+| Variable name | Possible values | `.env.example` |
+| --- | --- | --- |
+| `<SVC>_RUN_ONCE` | `true` or `false` | `ALICE_RUN_ONCE` |
+| `<SVC>_SCHEDULE_MODE` | `interval`, `daily`, `weekly`, `twice_weekly`, or `monthly` | `ALICE_SCHEDULE_MODE` |
+| `<SVC>_SCHEDULE_BACKUP_TIME` | `HH:MM` 24-hour local time | `ALICE_SCHEDULE_BACKUP_TIME` |
+| `<SVC>_SCHEDULE_WEEKDAYS` | Comma-separated weekday names | `ALICE_SCHEDULE_WEEKDAYS` |
+| `<SVC>_SCHEDULE_MONTHLY_WEEK` | `first`, `second`, `third`, `fourth`, or `last` | `ALICE_SCHEDULE_MONTHLY_WEEK` |
+| `<SVC>_SCHEDULE_INTERVAL_MINUTES` | Positive integer minutes | `ALICE_SCHEDULE_INTERVAL_MINUTES` |
+| `<SVC>_REAUTH_INTERVAL_DAYS` | Positive integer days | `ALICE_REAUTH_INTERVAL_DAYS` |
+| `<SVC>_RESTART_POLICY` | Compose restart policy, for example `unless-stopped` or `no` | `ALICE_RESTART_POLICY` |
 
-N.B.
+*N.B.*
+
+Use one weekday in `<SVC>_SCHEDULE_WEEKDAYS` for `weekly`, two distinct
+weekdays for `twice_weekly`, and one weekday plus
+`<SVC>_SCHEDULE_MONTHLY_WEEK` for `monthly`.
 
 When `<SVC>_RUN_ONCE=true`, set `<SVC>_RESTART_POLICY=no`. If you leave a
 restart policy such as `unless-stopped` in place, the one-shot container exits
@@ -84,50 +88,39 @@ and then immediately starts again.
 
 ### Transfer and backup behaviour
 
-- `<SVC>_SYNC_DOWNLOAD_WORKERS`: `auto` or an integer from `1` to `16`.
-- `<SVC>_SYNC_DOWNLOAD_CHUNK_MIB`: streamed download chunk size in MiB.
-- `<SVC>_BACKUP_DISCOVERY_MODE`: `full` or `until_found`.
-- `<SVC>_BACKUP_UNTIL_FOUND_COUNT`: positive consecutive-match streak used by
-  `until_found`.
-- `<SVC>_BACKUP_DELETE_REMOVED`: remove local files and empty directories when
-  they no longer exist remotely.
-- `<SVC>_BACKUP_ALBUMS_ENABLED`: manage the derived `albums/` tree.
-- `<SVC>_BACKUP_ALBUM_LINKS_MODE`: `hardlink` or `copy`.
-- `<SVC>_BACKUP_INCLUDE_SHARED_ALBUMS`: include shared albums in `albums/`.
-- `<SVC>_BACKUP_INCLUDE_FAVOURITES`: include the favourites album in
-  `albums/`.
+| Variable name | Possible values | `.env.example` |
+| --- | --- | --- |
+| `<SVC>_SYNC_DOWNLOAD_WORKERS` | `auto` or an integer from `1` to `16` | `ALICE_SYNC_DOWNLOAD_WORKERS` |
+| `<SVC>_SYNC_DOWNLOAD_CHUNK_MIB` | Positive integer MiB value | `ALICE_SYNC_DOWNLOAD_CHUNK_MIB` |
+| `<SVC>_BACKUP_DISCOVERY_MODE` | `full` or `until_found` | `ALICE_BACKUP_DISCOVERY_MODE` |
+| `<SVC>_BACKUP_UNTIL_FOUND_COUNT` | Positive consecutive-match count | `ALICE_BACKUP_UNTIL_FOUND_COUNT` |
+| `<SVC>_BACKUP_DELETE_REMOVED` | `true` or `false` | `ALICE_BACKUP_DELETE_REMOVED` |
+| `<SVC>_BACKUP_ALBUMS_ENABLED` | `true` or `false` | `ALICE_BACKUP_ALBUMS_ENABLED` |
+| `<SVC>_BACKUP_ALBUM_LINKS_MODE` | `hardlink` or `copy` | `ALICE_BACKUP_ALBUM_LINKS_MODE` |
+| `<SVC>_BACKUP_INCLUDE_SHARED_ALBUMS` | `true` or `false` | `ALICE_BACKUP_INCLUDE_SHARED_ALBUMS` |
+| `<SVC>_BACKUP_INCLUDE_FAVOURITES` | `true` or `false` | `ALICE_BACKUP_INCLUDE_FAVOURITES` |
 
-N.B.
+*N.B.*
 
 `full` is the default and safest discovery mode. `until_found` is an explicit
 performance mode based on `pyicloud` documenting that `All Photos` is ordered
 with the most recently added assets first.
-
-N.B.
 
 `until_found` stops scanning once it has seen the configured number of
 consecutive unchanged canonical entries. It can reduce remote listing work on
 incremental runs, but only for canonical-library discovery. `full` remains the
 safer default when you want the most conservative behaviour.
 
-N.B.
-
 `until_found` cannot be combined with `<SVC>_BACKUP_DELETE_REMOVED=true` or
 `<SVC>_BACKUP_ALBUMS_ENABLED=true`. Both of those features require a full
 authoritative remote snapshot.
 
-N.B.
-
 With those restrictions in place, `until_found` is best thought of as a
 library-discovery optimisation rather than a general reduced-work mode.
-
-N.B.
 
 `hardlink` is the opinionated default. It avoids duplicate data where the host
 filesystem and bind mount allow hard links. `copy` is strict copy-only mode and
 does not attempt hard links first.
-
-N.B.
 
 When `<SVC>_BACKUP_ALBUMS_ENABLED=false`, the worker stops creating, refreshing,
 and deleting files under `albums/`. Existing album output is left untouched.
@@ -169,7 +162,7 @@ Runtime layout:
     └── keyring_pass.cfg
 ```
 
-N.B.
+*N.B.*
 
 - `pyiclodoc-photos-safety_net_done.flag` is created when first-run safety
   checks pass.
@@ -202,7 +195,7 @@ Example:
 /output/albums/Trips/IMG_0001.HEIC
 ```
 
-N.B.
+*N.B.*
 
 When two different assets would otherwise collide on the same canonical dated
 path, the worker adds a deterministic suffix before the file extension. That
@@ -215,7 +208,7 @@ keeps one canonical file per asset without abandoning the readable
 - `/logs/pyiclodoc-photos-heartbeat.txt`: healthcheck heartbeat.
 - `/logs/pyiclodoc-photos-worker.*.log.gz`: rotated compressed log archives.
 
-N.B.
+*N.B.*
 
 Logger settings are cached inside the worker process and rotation checks are
 throttled per log file. That keeps debug-heavy runs lower in overhead terms
