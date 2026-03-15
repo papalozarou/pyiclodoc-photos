@@ -117,6 +117,72 @@ def log_effective_backup_settings(
 
 
 # ------------------------------------------------------------------------------
+# This function removes a safety-net marker when it is no longer required.
+#
+# 1. "MARKER_PATH" is the marker file to remove.
+# 2. "LOG_FILE" is worker log destination.
+# 3. "DESCRIPTION" names the marker purpose for logs.
+#
+# Returns: True when the marker is absent or removed, otherwise False.
+#
+# N.B.
+# Safety-net markers are operational state only. Failure to clear them must not
+# crash the worker, but it must stop the run because the state transition was
+# not persisted safely.
+# ------------------------------------------------------------------------------
+def clear_safety_net_marker(
+    MARKER_PATH: Path,
+    LOG_FILE: Path,
+    DESCRIPTION: str,
+) -> bool:
+    if not MARKER_PATH.exists():
+        return True
+
+    try:
+        MARKER_PATH.unlink()
+        return True
+    except OSError as ERROR:
+        log_line(
+            LOG_FILE,
+            "error",
+            f"Safety-net marker clear failed for {DESCRIPTION}: {MARKER_PATH} ({ERROR})",
+        )
+        return False
+
+
+# ------------------------------------------------------------------------------
+# This function writes one safety-net marker outcome to disk.
+#
+# 1. "MARKER_PATH" is the marker file path.
+# 2. "MARKER_VALUE" is the marker file content.
+# 3. "LOG_FILE" is worker log destination.
+# 4. "DESCRIPTION" names the marker purpose for logs.
+#
+# Returns: True when the marker was written, otherwise False.
+#
+# N.B.
+# Safety-net marker persistence is treated as explicit operational state. The
+# worker must fail safely when it cannot record that state.
+# ------------------------------------------------------------------------------
+def write_safety_net_marker(
+    MARKER_PATH: Path,
+    MARKER_VALUE: str,
+    LOG_FILE: Path,
+    DESCRIPTION: str,
+) -> bool:
+    try:
+        MARKER_PATH.write_text(MARKER_VALUE, encoding="utf-8")
+        return True
+    except OSError as ERROR:
+        log_line(
+            LOG_FILE,
+            "error",
+            f"Safety-net marker write failed for {DESCRIPTION}: {MARKER_PATH} ({ERROR})",
+        )
+        return False
+
+
+# ------------------------------------------------------------------------------
 # This function enforces first-run safety checks before backups are allowed.
 #
 # 1. "CONFIG" is runtime configuration.
@@ -134,11 +200,22 @@ def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Pa
 
     RESULT = run_first_time_safety_net(CONFIG.output_dir, CONFIG.safety_net_sample_size)
 
-    if not RESULT.should_block and BLOCKED_MARKER.exists():
-        BLOCKED_MARKER.unlink()
+    if not RESULT.should_block and not clear_safety_net_marker(
+        BLOCKED_MARKER,
+        LOG_FILE,
+        "blocked state",
+    ):
+        return False
 
     if not RESULT.should_block:
-        DONE_MARKER.write_text("ok\n", encoding="utf-8")
+        if not write_safety_net_marker(
+            DONE_MARKER,
+            "ok\n",
+            LOG_FILE,
+            "done state",
+        ):
+            return False
+
         log_line(LOG_FILE, "info", "First-run safety net passed.")
         return True
 
@@ -159,7 +236,12 @@ def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Pa
             SAMPLE_TEXT,
         ),
     )
-    BLOCKED_MARKER.write_text("blocked\n", encoding="utf-8")
+    write_succeeded = write_safety_net_marker(
+        BLOCKED_MARKER,
+        "blocked\n",
+        LOG_FILE,
+        "blocked state",
+    )
     return False
 
 
