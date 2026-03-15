@@ -18,7 +18,7 @@ import os
 import shutil
 import time
 
-from app.icloud_client import ICloudDriveClient, RemoteEntry
+from app.icloud_client import DownloadResult, ICloudDriveClient, RemoteEntry
 from app.logger import log_line
 
 TRANSFER_PROGRESS_LOG_INTERVAL_SECONDS = 30.0
@@ -317,10 +317,12 @@ def perform_incremental_sync(
     if LOG_FILE is not None:
         log_line(LOG_FILE, "info", "Album reconciliation started.")
 
+    VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
     ALBUM_VIEWS_CREATED, ALBUM_VIEWS_REUSED, ALBUM_VIEWS_SKIPPED = reconcile_album_views(
         OUTPUT_DIR,
         FILES,
         NEW_MANIFEST,
+        VALID_CANONICAL_PATHS,
         LOG_FILE,
     )
 
@@ -433,9 +435,12 @@ def run_transfers(
                 COMPLETED += 1
 
                 try:
-                    IS_SUCCESS = FUTURE.result()
+                    RESULT = FUTURE.result()
                 except Exception as ERROR:
-                    IS_SUCCESS = False
+                    RESULT = DownloadResult(
+                        False,
+                        failure_reason=f"worker_exception:{type(ERROR).__name__}",
+                    )
                     REASON = f"worker_exception:{type(ERROR).__name__}"
                     FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                     if LOG_FILE is not None:
@@ -445,29 +450,25 @@ def run_transfers(
                             f"File transfer worker failed: {ENTRY.path} ({type(ERROR).__name__}: {ERROR})",
                         )
 
-                if IS_SUCCESS:
+                if RESULT.success:
                     LOCAL_PATH = OUTPUT_DIR / ENTRY.path
                     apply_remote_modified_time(LOCAL_PATH, ENTRY.modified)
                     NEW_MANIFEST[ENTRY.path] = entry_metadata(ENTRY)
                     TRANSFERRED += 1
-                    TRANSFERRED_BYTES += max(ENTRY.size, 0)
+                    TRANSFERRED_BYTES += max(RESULT.written_bytes, 0)
                     if LOG_FILE is not None:
                         log_line(
                             LOG_FILE,
                             "debug",
-                            f"Photo transferred: {ENTRY.path} ({max(ENTRY.size, 0)} bytes)",
+                            f"Photo transferred: {ENTRY.path} ({max(RESULT.written_bytes, 0)} bytes)",
                         )
                     continue
 
                 ERRORS += 1
-
+                REASON = RESULT.failure_reason or "unknown_error"
+                FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                 if LOG_FILE is not None:
-                    REASON = CLIENT.get_last_download_failure_reason() or "unknown_error"
-                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
                     log_line(LOG_FILE, "error", f"File transfer failed: {ENTRY.path} ({REASON})")
-                else:
-                    REASON = CLIENT.get_last_download_failure_reason() or "unknown_error"
-                    FAILURE_REASON_COUNTS[REASON] = FAILURE_REASON_COUNTS.get(REASON, 0) + 1
 
             NOW_EPOCH = time.monotonic()
 
@@ -502,7 +503,7 @@ def run_transfers(
 # 2. "OUTPUT_DIR" is local backup root.
 # 3. "ENTRY" is the remote photo metadata record.
 #
-# Returns: True on successful file transfer, otherwise False.
+# Returns: "DownloadResult" for the file transfer attempt.
 # 
 # N.B.
 # The sync layer delegates all remote-open behaviour to the client so retry and
@@ -512,8 +513,27 @@ def transfer_if_required(
     CLIENT: ICloudDriveClient,
     OUTPUT_DIR: Path,
     ENTRY: RemoteEntry,
-) -> bool:
-    return CLIENT.download_file(ENTRY.path, OUTPUT_DIR / ENTRY.path)
+) -> DownloadResult:
+    return CLIENT.download_file_result(ENTRY.path, OUTPUT_DIR / ENTRY.path)
+
+
+# ------------------------------------------------------------------------------
+# This function returns canonical paths already validated for this run.
+#
+# 1. "NEW_MANIFEST" is the refreshed manifest under construction.
+#
+# Returns: Canonical-path set safe to use for derived album output.
+# ------------------------------------------------------------------------------
+def get_valid_canonical_paths(NEW_MANIFEST: dict[str, dict[str, Any]]) -> set[str]:
+    RESULT: set[str] = set()
+
+    for RELATIVE_PATH, METADATA in NEW_MANIFEST.items():
+        if str(METADATA.get("entry_kind", "")) == "album_link":
+            continue
+
+        RESULT.add(RELATIVE_PATH)
+
+    return RESULT
 
 
 # ------------------------------------------------------------------------------
@@ -544,7 +564,8 @@ def apply_remote_modified_time(LOCAL_PATH: Path, MODIFIED: str) -> None:
 # 1. "OUTPUT_DIR" is local backup root.
 # 2. "ENTRIES" is the current remote photo list.
 # 3. "NEW_MANIFEST" is the refreshed manifest under construction.
-# 4. "LOG_FILE" is optional log file path.
+# 4. "VALID_CANONICAL_PATHS" is the set of canonical paths verified for use.
+# 5. "LOG_FILE" is optional log file path.
 #
 # Returns: Tuple "(created, reused, skipped_missing_source)".
 # 
@@ -556,6 +577,7 @@ def reconcile_album_views(
     OUTPUT_DIR: Path,
     ENTRIES: list[RemoteEntry],
     NEW_MANIFEST: dict[str, dict[str, Any]],
+    VALID_CANONICAL_PATHS: set[str],
     LOG_FILE: Path | None,
 ) -> tuple[int, int, int]:
     CREATED = 0
@@ -564,6 +586,17 @@ def reconcile_album_views(
 
     for ENTRY in ENTRIES:
         if not ENTRY.album_paths:
+            continue
+
+        if ENTRY.path not in VALID_CANONICAL_PATHS:
+            SKIPPED_MISSING_SOURCE += len(ENTRY.album_paths)
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    "Album view skipped unverified canonical source: "
+                    f"{ENTRY.path}",
+                )
             continue
 
         SOURCE_PATH = OUTPUT_DIR / ENTRY.path

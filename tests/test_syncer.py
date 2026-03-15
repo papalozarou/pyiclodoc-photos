@@ -12,6 +12,7 @@ from tests._stubs import install_dependency_stubs
 
 install_dependency_stubs()
 
+from app.icloud_client import DownloadResult
 from app.syncer import perform_incremental_sync
 
 
@@ -42,11 +43,11 @@ class FakeClient:
     def list_entries(self) -> list[RemoteEntry]:
         return self.entries
 
-    def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
         self.download_calls.append(REMOTE_PATH)
         LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
         LOCAL_PATH.write_bytes(b"data")
-        return True
+        return DownloadResult(True, written_bytes=4)
 
     def get_last_download_failure_reason(self) -> str:
         return self.failure_reason
@@ -60,9 +61,28 @@ class FailingClient(FakeClient):
         super().__init__(ENTRIES)
         self.failure_reason = FAILURE_REASON
 
-    def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
         _ = (REMOTE_PATH, LOCAL_PATH)
-        return False
+        return DownloadResult(False, failure_reason=self.failure_reason)
+
+
+# ------------------------------------------------------------------------------
+# This class provides per-path failure results for album-gating tests.
+# ------------------------------------------------------------------------------
+class SelectiveClient(FakeClient):
+    def __init__(self, ENTRIES: list[RemoteEntry], FAILED_PATHS: dict[str, str]):
+        super().__init__(ENTRIES)
+        self.failed_paths = FAILED_PATHS
+
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
+        self.download_calls.append(REMOTE_PATH)
+
+        if REMOTE_PATH in self.failed_paths:
+            return DownloadResult(False, failure_reason=self.failed_paths[REMOTE_PATH])
+
+        LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LOCAL_PATH.write_bytes(b"data")
+        return DownloadResult(True, written_bytes=4)
 
 
 # ------------------------------------------------------------------------------
@@ -168,6 +188,83 @@ class TestSyncer(unittest.TestCase):
             self.assertEqual(SUMMARY.error_files, 1)
             self.assertIn("File transfer failed: library/2026/03/14/IMG_0002.JPG (timeout)", LOG_TEXT)
             self.assertIn("Transfer failure reason detail: timeout=1", LOG_TEXT)
+
+# --------------------------------------------------------------------------
+# This test confirms album outputs are not derived from stale canonical files
+# when the current transfer for that asset fails.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_skips_album_output_for_failed_transfer(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0003.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-3",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0003.JPG",
+            album_paths=("albums/Trips",),
+        )
+        CLIENT = SelectiveClient([ENTRY], {ENTRY.path: "timeout"})
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            STALE_SOURCE = TMPDIR_PATH / ENTRY.path
+            STALE_SOURCE.parent.mkdir(parents=True, exist_ok=True)
+            STALE_SOURCE.write_bytes(b"stale")
+
+            SUMMARY, MANIFEST = perform_incremental_sync(CLIENT, TMPDIR_PATH, {})
+
+            self.assertEqual(SUMMARY.error_files, 1)
+            self.assertFalse((TMPDIR_PATH / "albums/Trips/IMG_0003.JPG").exists())
+            self.assertNotIn("albums/Trips/IMG_0003.JPG", MANIFEST)
+
+# --------------------------------------------------------------------------
+# This test confirms transfer failure detail aggregates distinct per-file
+# reasons instead of relying on shared mutable client state.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_aggregates_per_transfer_failure_reasons(self) -> None:
+        FIRST_ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0004.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-4",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0004.JPG",
+        )
+        SECOND_ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0005.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-5",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0005.JPG",
+        )
+        CLIENT = SelectiveClient(
+            [FIRST_ENTRY, SECOND_ENTRY],
+            {
+                FIRST_ENTRY.path: "timeout",
+                SECOND_ENTRY.path: "write_failed",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+
+            self.addCleanup(self._restore_log_level)
+            self._set_debug_logging()
+
+            SUMMARY, _ = perform_incremental_sync(
+                CLIENT,
+                Path(TMPDIR),
+                {},
+                LOG_FILE=LOG_FILE,
+            )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertEqual(SUMMARY.error_files, 2)
+            self.assertIn("Transfer failure reason detail: timeout=1, write_failed=1", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This helper sets debug logging for syncer log assertions.

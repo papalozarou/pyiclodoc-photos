@@ -45,6 +45,16 @@ class RemoteEntry:
 
 
 # ------------------------------------------------------------------------------
+# This data class captures one canonical download attempt outcome.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class DownloadResult:
+    success: bool
+    failure_reason: str = ""
+    written_bytes: int = 0
+
+
+# ------------------------------------------------------------------------------
 # This class encapsulates iCloud auth, photo listing, and asset downloads.
 # 
 # N.B.
@@ -60,8 +70,8 @@ class ICloudDriveClient:
 # Returns: None.
 # 
 # N.B.
-# The client keeps the last download failure reason as a short token so the
-# sync layer can log concise diagnostics across worker threads.
+# The client still exposes the last failure reason for compatibility, but the
+# sync layer now consumes explicit per-transfer results instead.
 # --------------------------------------------------------------------------
     def __init__(self, CONFIG: AppConfig):
         self.config = CONFIG
@@ -329,28 +339,26 @@ class ICloudDriveClient:
 # 1. "REMOTE_PATH" is the canonical relative output path.
 # 2. "LOCAL_PATH" is the full destination file path.
 #
-# Returns: True on success, otherwise False.
+# Returns: "DownloadResult" describing download success or failure.
 # 
 # Failure behaviour:
-# 1. Sets a short failure token on known error paths.
-# 2. Keeps the final destination untouched unless the full download succeeds.
+# 1. Keeps the final destination untouched unless the full download succeeds.
+# 2. Returns a concrete failure token instead of relying on shared mutable
+#    state for concurrent callers.
 # --------------------------------------------------------------------------
-    def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
         if self.api is None:
-            self._last_download_failure_reason = "not_authenticated"
-            return False
+            return self._set_download_failure_result("not_authenticated")
 
         ASSET = self._get_asset_by_remote_path(REMOTE_PATH)
 
         if ASSET is None:
-            self._last_download_failure_reason = "asset_not_found"
-            return False
+            return self._set_download_failure_result("asset_not_found")
 
         DOWNLOAD_HANDLE = self._open_asset_download(ASSET)
 
         if DOWNLOAD_HANDLE is None:
-            self._last_download_failure_reason = "download_unavailable"
-            return False
+            return self._set_download_failure_result("download_unavailable")
 
         LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
         TEMP_PATH = self._get_temporary_download_path(LOCAL_PATH)
@@ -361,26 +369,47 @@ class ICloudDriveClient:
             FAILURE_REASON = self._validate_download_size(WRITTEN_BYTES, EXPECTED_SIZE)
 
             if FAILURE_REASON:
-                self._last_download_failure_reason = FAILURE_REASON
                 self._cleanup_download_temp_file(TEMP_PATH)
-                return False
+                return self._set_download_failure_result(FAILURE_REASON)
 
             TEMP_PATH.replace(LOCAL_PATH)
         except UnsupportedDownloadHandleError:
-            self._last_download_failure_reason = "empty_download"
             self._cleanup_download_temp_file(TEMP_PATH)
-            return False
+            return self._set_download_failure_result("empty_download")
         except OSError:
-            self._last_download_failure_reason = "write_failed"
             self._cleanup_download_temp_file(TEMP_PATH)
-            return False
+            return self._set_download_failure_result("write_failed")
         except Exception:
-            self._last_download_failure_reason = "download_read_failed"
             self._cleanup_download_temp_file(TEMP_PATH)
-            return False
+            return self._set_download_failure_result("download_read_failed")
 
         self._last_download_failure_reason = ""
-        return True
+        return DownloadResult(True, written_bytes=WRITTEN_BYTES)
+
+# --------------------------------------------------------------------------
+# This function downloads one asset into the canonical library tree.
+#
+# 1. "REMOTE_PATH" is the canonical relative output path.
+# 2. "LOCAL_PATH" is the full destination file path.
+#
+# Returns: True on success, otherwise False.
+# 
+# Failure behaviour:
+# 1. Preserves the historic boolean return contract for compatibility.
+# --------------------------------------------------------------------------
+    def download_file(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> bool:
+        return self.download_file_result(REMOTE_PATH, LOCAL_PATH).success
+
+# --------------------------------------------------------------------------
+# This function stores a failure result and mirrors it to compatibility state.
+#
+# 1. "FAILURE_REASON" is the short result token for the failed transfer.
+#
+# Returns: Failed "DownloadResult" value.
+# --------------------------------------------------------------------------
+    def _set_download_failure_result(self, FAILURE_REASON: str) -> DownloadResult:
+        self._last_download_failure_reason = FAILURE_REASON
+        return DownloadResult(False, failure_reason=FAILURE_REASON)
 
 # --------------------------------------------------------------------------
 # This function returns a temporary sibling path for an in-progress download.
