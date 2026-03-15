@@ -78,7 +78,8 @@ def attempt_auth(
     USERNAME: str,
     APPLE_ID: str,
     PROVIDED_CODE: str,
-) -> tuple[AuthState, bool, str]:
+    ) -> tuple[AuthState, bool, str]:
+    PERSISTENCE_WARNING = " Auth state persistence failed."
     CODE = PROVIDED_CODE.strip()
     APPLE_ID_LABEL = format_apple_id_label(APPLE_ID)
 
@@ -94,18 +95,21 @@ def attempt_auth(
             reauth_pending=False,
             reminder_stage="none",
         )
-        save_auth_state(AUTH_STATE_PATH, NEW_STATE)
+        if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+            DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
         NOTIFY_MESSAGE(build_auth_complete_message(APPLE_ID_LABEL, DETAILS))
         return NEW_STATE, True, DETAILS
 
     if "Two-factor code is required" in DETAILS:
         NEW_STATE = replace(AUTH_STATE, auth_pending=True)
-        save_auth_state(AUTH_STATE_PATH, NEW_STATE)
+        if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+            DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
         NOTIFY_MESSAGE(build_auth_required_message(USERNAME, APPLE_ID_LABEL))
         return NEW_STATE, False, DETAILS
 
     NEW_STATE = replace(AUTH_STATE, auth_pending=True)
-    save_auth_state(AUTH_STATE_PATH, NEW_STATE)
+    if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+        DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
     NOTIFY_MESSAGE(build_auth_failed_message(APPLE_ID_LABEL, DETAILS))
     return NEW_STATE, False, DETAILS
 

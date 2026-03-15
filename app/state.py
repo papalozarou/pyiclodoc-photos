@@ -99,19 +99,30 @@ def quarantine_corrupt_json(PATH: Path) -> None:
 # 1. "PATH" is the destination JSON file.
 # 2. "PAYLOAD" is the dictionary to persist.
 #
-# Returns: None.
+# Returns: True on success, otherwise False.
 #
 # N.B.
 # The worker writes to a sibling temporary file first, then replaces the final
 # file path so interrupted writes do not leave half-written state behind.
 # ------------------------------------------------------------------------------
-def write_json(PATH: Path, PAYLOAD: dict[str, Any]) -> None:
+def write_json(PATH: Path, PAYLOAD: dict[str, Any]) -> bool:
     TEMPORARY_PATH = PATH.with_suffix(PATH.suffix + ".tmp")
 
-    with TEMPORARY_PATH.open("w", encoding="utf-8") as HANDLE:
-        json.dump(PAYLOAD, HANDLE, indent=2, sort_keys=True)
+    try:
+        with TEMPORARY_PATH.open("w", encoding="utf-8") as HANDLE:
+            json.dump(PAYLOAD, HANDLE, indent=2, sort_keys=True)
 
-    TEMPORARY_PATH.replace(PATH)
+        TEMPORARY_PATH.replace(PATH)
+        return True
+    except OSError as ERROR:
+        warn_state_issue(
+            f"State write failed at {PATH}: {type(ERROR).__name__}: {ERROR}",
+        )
+        try:
+            TEMPORARY_PATH.unlink()
+        except OSError:
+            pass
+        return False
 
 
 # ------------------------------------------------------------------------------
@@ -152,16 +163,16 @@ def load_auth_state(PATH: Path) -> AuthState:
 # 1. "PATH" is the JSON state file location.
 # 2. "STATE" is the model to persist.
 #
-# Returns: None.
+# Returns: True on success, otherwise False.
 # ------------------------------------------------------------------------------
-def save_auth_state(PATH: Path, STATE: AuthState) -> None:
+def save_auth_state(PATH: Path, STATE: AuthState) -> bool:
     PAYLOAD = {
         "last_auth_utc": STATE.last_auth_utc,
         "auth_pending": STATE.auth_pending,
         "reauth_pending": STATE.reauth_pending,
         "reminder_stage": STATE.reminder_stage,
     }
-    write_json(PATH, PAYLOAD)
+    return write_json(PATH, PAYLOAD)
 
 
 # ------------------------------------------------------------------------------
@@ -192,7 +203,7 @@ def load_manifest(PATH: Path) -> dict[str, dict[str, Any]]:
 # 1. "PATH" is the manifest file location.
 # 2. "MANIFEST" is the payload to persist.
 #
-# Returns: None.
+# Returns: True on success, otherwise False.
 # ------------------------------------------------------------------------------
-def save_manifest(PATH: Path, MANIFEST: dict[str, dict[str, Any]]) -> None:
-    write_json(PATH, MANIFEST)
+def save_manifest(PATH: Path, MANIFEST: dict[str, dict[str, Any]]) -> bool:
+    return write_json(PATH, MANIFEST)

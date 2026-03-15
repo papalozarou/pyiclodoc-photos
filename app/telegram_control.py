@@ -95,19 +95,23 @@ def handle_command(
 
     if COMMAND == "auth" and not ARGS:
         NEW_STATE = replace(AUTH_STATE, auth_pending=True)
-        save_auth_state(CONFIG.auth_state_path, NEW_STATE)
+        DETAILS = ""
+        if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):
+            DETAILS = "Auth state persistence failed."
         MESSAGE_SENDER(
             build_auth_required_message(CONFIG.container_username, CONFIG.icloud_email)
         )
-        return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False)
+        return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     if COMMAND == "reauth" and not ARGS:
         NEW_STATE = replace(AUTH_STATE, reauth_pending=True)
-        save_auth_state(CONFIG.auth_state_path, NEW_STATE)
+        DETAILS = ""
+        if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):
+            DETAILS = "Auth state persistence failed."
         MESSAGE_SENDER(
             build_manual_reauth_message(CONFIG.container_username, CONFIG.icloud_email)
         )
-        return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False)
+        return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     NEW_STATE, NEW_AUTH, DETAILS = AUTH_EXECUTOR(AUTH_STATE, ARGS)
     return CommandOutcome(NEW_STATE, NEW_AUTH, False, DETAILS)

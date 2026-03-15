@@ -182,6 +182,32 @@ class TestAuthFlow(unittest.TestCase):
         self.assertIn("Authentication complete", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
+# This test confirms auth details surface auth-state persistence failure when
+# the save path cannot be written.
+# --------------------------------------------------------------------------
+    def test_attempt_auth_surfaces_persistence_failure_in_details(self) -> None:
+        STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+        CLIENT = FakeClient((True, "Signed in."), (True, "ok"))
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                with patch("app.auth_flow.save_auth_state", return_value=False):
+                    _, _, DETAILS = attempt_auth(
+                        CLIENT,
+                        STATE,
+                        STATE_PATH,
+                        SENT_MESSAGES.append,
+                        "alice",
+                        "alice@example.com",
+                        "",
+                    )
+
+        self.assertIn("Auth state persistence failed.", DETAILS)
+
+# --------------------------------------------------------------------------
 # This test confirms the two-day reminder stage marks reauth pending and
 # emits the manual reauth prompt.
 # --------------------------------------------------------------------------

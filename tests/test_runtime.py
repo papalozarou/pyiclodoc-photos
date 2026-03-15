@@ -223,6 +223,38 @@ class TestRuntime(unittest.TestCase):
             self.assertIn("Average speed:", COMPLETION_MESSAGE)
 
 # --------------------------------------------------------------------------
+# This test confirms backup completion surfaces manifest persistence failure
+# instead of assuming the save succeeded.
+# --------------------------------------------------------------------------
+    def test_run_backup_surfaces_manifest_save_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+            CONFIG = self._create_config(TMPDIR_PATH)
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            CLIENT = MagicMock()
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            SUMMARY = SyncResult(1, 1, 1024, 0, 0)
+
+            with patch("app.runtime.load_manifest", return_value={}):
+                with patch("app.runtime.perform_incremental_sync", return_value=(SUMMARY, {})):
+                    with patch("app.runtime.save_manifest", return_value=False):
+                        with patch("app.runtime.notify") as NOTIFY:
+                            with patch("app.runtime.time.time", side_effect=[100, 101]):
+                                run_backup(
+                                    CLIENT,
+                                    CONFIG,
+                                    TELEGRAM,
+                                    LOG_FILE,
+                                    "scheduled",
+                                    BUILD_DETAIL,
+                                )
+
+            COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
+            self.assertIn("Manifest save failed. Next run may repeat work.", COMPLETION_MESSAGE)
+            self.assertIn("Manifest save failed at", LOG_FILE.read_text(encoding="utf-8"))
+
+# --------------------------------------------------------------------------
 # This test confirms backup completion omits average speed when no files were
 # transferred in the run.
 # --------------------------------------------------------------------------

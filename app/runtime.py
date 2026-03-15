@@ -297,7 +297,7 @@ def run_backup(
         f"errors={SUMMARY.error_files}, "
         f"manifest_entries={len(NEW_MANIFEST)}",
     )
-    save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
+    MANIFEST_SAVED = save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
 
     DURATION_SECONDS = int(time.time()) - RUN_START_EPOCH
     AVERAGE_SPEED = format_average_speed(SUMMARY.transferred_bytes, DURATION_SECONDS)
@@ -310,6 +310,14 @@ def run_backup(
 
     if SUMMARY.transferred_files > 0:
         STATUS_LINES.append(f"Average speed: {AVERAGE_SPEED}")
+
+    if not MANIFEST_SAVED:
+        STATUS_LINES.append("Manifest save failed. Next run may repeat work.")
+        log_line(
+            LOG_FILE,
+            "error",
+            f"Manifest save failed at {CONFIG.manifest_path}.",
+        )
 
     COMPLETION_MESSAGE = build_backup_complete_message(APPLE_ID_LABEL, STATUS_LINES)
     notify(TELEGRAM, COMPLETION_MESSAGE)
