@@ -3,11 +3,15 @@
 # file output.
 # ------------------------------------------------------------------------------
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 import gzip
 import os
 import shutil
+from typing import Optional
 
 from app.time_utils import now_local
 
@@ -19,6 +23,31 @@ LOG_LEVELS = {
 ANSI_RED = "\033[31m"
 ANSI_RESET = "\033[0m"
 ROTATED_FILE_PATTERN = "{name}.{stamp}.log"
+ROTATION_CHECK_INTERVAL_SECONDS = 1
+
+
+# ------------------------------------------------------------------------------
+# This data class stores parsed logger settings derived from the environment.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class LoggerSettings:
+    log_level: str
+    rotate_max_bytes: int
+    rotate_daily: bool
+    rotate_keep_days: int
+
+
+# ------------------------------------------------------------------------------
+# This data class stores lightweight per-file rotation check state.
+# ------------------------------------------------------------------------------
+@dataclass
+class RotationState:
+    last_checked_epoch: int = 0
+
+
+_CACHED_SETTINGS_SIGNATURE: Optional[tuple[str, str, str, str]] = None
+_CACHED_SETTINGS: Optional[LoggerSettings] = None
+_ROTATION_STATES: dict[Path, RotationState] = {}
 
 
 # ------------------------------------------------------------------------------
@@ -31,17 +60,135 @@ def get_timestamp() -> str:
 
 
 # ------------------------------------------------------------------------------
-# This function returns the configured log threshold from environment.
+# This function returns the current logger environment signature.
+#
+# Returns: Tuple of raw environment values used by logger settings.
+# ------------------------------------------------------------------------------
+def get_settings_signature() -> tuple[str, str, str, str]:
+    return (
+        os.getenv("LOG_LEVEL", "info"),
+        os.getenv("LOG_ROTATE_MAX_MIB", "100"),
+        os.getenv("LOG_ROTATE_DAILY", "true"),
+        os.getenv("LOG_ROTATE_KEEP_DAYS", "14"),
+    )
+
+
+# ------------------------------------------------------------------------------
+# This function parses the configured log threshold from raw environment text.
+#
+# 1. "RAW_VALUE" is the unparsed environment value.
 #
 # Returns: Normalised log level token.
 # ------------------------------------------------------------------------------
-def get_log_level() -> str:
-    RAW_VALUE = os.getenv("LOG_LEVEL", "info").strip().lower()
+def parse_log_level(RAW_VALUE: str) -> str:
+    CLEAN_VALUE = RAW_VALUE.strip().lower()
 
-    if RAW_VALUE in LOG_LEVELS:
-        return RAW_VALUE
+    if CLEAN_VALUE in LOG_LEVELS:
+        return CLEAN_VALUE
 
     return "info"
+
+
+# ------------------------------------------------------------------------------
+# This function parses the configured maximum log size in bytes.
+#
+# 1. "RAW_VALUE" is the unparsed environment value.
+#
+# Returns: Positive byte count, defaulting to 100 MiB.
+# ------------------------------------------------------------------------------
+def parse_log_rotate_max_bytes(RAW_VALUE: str) -> int:
+    DEFAULT_BYTES = 100 * 1024 * 1024
+    CLEAN_VALUE = RAW_VALUE.strip()
+
+    if not CLEAN_VALUE.isdigit():
+        return DEFAULT_BYTES
+
+    VALUE_MIB = int(CLEAN_VALUE)
+    if VALUE_MIB < 1:
+        return DEFAULT_BYTES
+
+    return VALUE_MIB * 1024 * 1024
+
+
+# ------------------------------------------------------------------------------
+# This function parses the configured daily rollover toggle.
+#
+# 1. "RAW_VALUE" is the unparsed environment value.
+#
+# Returns: True when daily rollover is enabled, defaulting to true.
+# ------------------------------------------------------------------------------
+def parse_log_rotate_daily(RAW_VALUE: str) -> bool:
+    CLEAN_VALUE = RAW_VALUE.strip().lower()
+
+    if CLEAN_VALUE in {"1", "true", "yes", "on"}:
+        return True
+
+    if CLEAN_VALUE in {"0", "false", "no", "off"}:
+        return False
+
+    return True
+
+
+# ------------------------------------------------------------------------------
+# This function parses the rotated-log retention period in days.
+#
+# 1. "RAW_VALUE" is the unparsed environment value.
+#
+# Returns: Positive day count, defaulting to 14 days.
+# ------------------------------------------------------------------------------
+def parse_log_rotate_keep_days(RAW_VALUE: str) -> int:
+    CLEAN_VALUE = RAW_VALUE.strip()
+
+    if not CLEAN_VALUE.isdigit():
+        return 14
+
+    VALUE = int(CLEAN_VALUE)
+    if VALUE < 1:
+        return 14
+
+    return VALUE
+
+
+# ------------------------------------------------------------------------------
+# This function returns cached logger settings with env-change invalidation.
+#
+# Returns: Parsed logger settings for the current process state.
+# ------------------------------------------------------------------------------
+def get_logger_settings() -> LoggerSettings:
+    global _CACHED_SETTINGS_SIGNATURE
+    global _CACHED_SETTINGS
+
+    SIGNATURE = get_settings_signature()
+
+    if _CACHED_SETTINGS is not None and _CACHED_SETTINGS_SIGNATURE == SIGNATURE:
+        return _CACHED_SETTINGS
+
+    SETTINGS = LoggerSettings(
+        log_level=parse_log_level(SIGNATURE[0]),
+        rotate_max_bytes=parse_log_rotate_max_bytes(SIGNATURE[1]),
+        rotate_daily=parse_log_rotate_daily(SIGNATURE[2]),
+        rotate_keep_days=parse_log_rotate_keep_days(SIGNATURE[3]),
+    )
+    _CACHED_SETTINGS_SIGNATURE = SIGNATURE
+    _CACHED_SETTINGS = SETTINGS
+    return SETTINGS
+
+
+# ------------------------------------------------------------------------------
+# This function resets cached logger settings and rotation state.
+#
+# Returns: None.
+#
+# N.B.
+# This exists mainly for tests and controlled runtime reconfiguration.
+# ------------------------------------------------------------------------------
+def reset_logger_state() -> None:
+    global _CACHED_SETTINGS_SIGNATURE
+    global _CACHED_SETTINGS
+
+    _CACHED_SETTINGS_SIGNATURE = None
+    _CACHED_SETTINGS = None
+    _ROTATION_STATES.clear()
 
 
 # ------------------------------------------------------------------------------
@@ -52,8 +199,7 @@ def get_log_level() -> str:
 # Returns: True when line should be written and printed.
 # ------------------------------------------------------------------------------
 def should_log(LEVEL: str) -> bool:
-    CURRENT_LEVEL = get_log_level()
-    CURRENT_WEIGHT = LOG_LEVELS.get(CURRENT_LEVEL, LOG_LEVELS["info"])
+    CURRENT_WEIGHT = LOG_LEVELS.get(get_logger_settings().log_level, LOG_LEVELS["info"])
     MESSAGE_WEIGHT = LOG_LEVELS.get(LEVEL.lower(), LOG_LEVELS["info"])
     return MESSAGE_WEIGHT >= CURRENT_WEIGHT
 
@@ -108,28 +254,53 @@ def rotate_log_if_needed(LOG_FILE: Path) -> None:
     if not LOG_FILE.exists():
         return
 
-    SHOULD_ROTATE = should_rotate_for_size(LOG_FILE) or should_rotate_for_daily_rollover(LOG_FILE)
+    if not should_check_rotation(LOG_FILE):
+        return
+
+    SETTINGS = get_logger_settings()
+    SHOULD_ROTATE = should_rotate_for_size(LOG_FILE, SETTINGS) or should_rotate_for_daily_rollover(
+        LOG_FILE,
+        SETTINGS,
+    )
     if not SHOULD_ROTATE:
         return
 
     rotate_log_file(LOG_FILE)
-    prune_rotated_logs(LOG_FILE)
+    prune_rotated_logs(LOG_FILE, SETTINGS)
+
+
+# ------------------------------------------------------------------------------
+# This function checks whether rotation state should be re-evaluated now.
+#
+# 1. "LOG_FILE" is the destination log file.
+#
+# Returns: True when rotation checks should run for this write.
+# ------------------------------------------------------------------------------
+def should_check_rotation(LOG_FILE: Path) -> bool:
+    NOW_EPOCH = int(now_local().timestamp())
+    STATE = _ROTATION_STATES.setdefault(LOG_FILE, RotationState())
+
+    if NOW_EPOCH - STATE.last_checked_epoch < ROTATION_CHECK_INTERVAL_SECONDS:
+        return False
+
+    STATE.last_checked_epoch = NOW_EPOCH
+    return True
 
 
 # ------------------------------------------------------------------------------
 # This function checks size-based log rotation trigger.
 #
 # 1. "LOG_FILE" is the destination log file.
+# 2. "SETTINGS" is the current parsed logger settings.
 #
 # Returns: True when file size meets or exceeds configured threshold.
 # ------------------------------------------------------------------------------
-def should_rotate_for_size(LOG_FILE: Path) -> bool:
-    MAX_BYTES = get_log_rotate_max_bytes()
-    if MAX_BYTES < 1:
+def should_rotate_for_size(LOG_FILE: Path, SETTINGS: LoggerSettings) -> bool:
+    if SETTINGS.rotate_max_bytes < 1:
         return False
 
     try:
-        return LOG_FILE.stat().st_size >= MAX_BYTES
+        return LOG_FILE.stat().st_size >= SETTINGS.rotate_max_bytes
     except OSError:
         return False
 
@@ -138,11 +309,12 @@ def should_rotate_for_size(LOG_FILE: Path) -> bool:
 # This function checks date-based daily rollover trigger.
 #
 # 1. "LOG_FILE" is the destination log file.
+# 2. "SETTINGS" is the current parsed logger settings.
 #
 # Returns: True when file has entries from a previous local date.
 # ------------------------------------------------------------------------------
-def should_rotate_for_daily_rollover(LOG_FILE: Path) -> bool:
-    if not get_log_rotate_daily():
+def should_rotate_for_daily_rollover(LOG_FILE: Path, SETTINGS: LoggerSettings) -> bool:
+    if not SETTINGS.rotate_daily:
         return False
 
     try:
@@ -190,15 +362,15 @@ def rotate_log_file(LOG_FILE: Path) -> None:
 # This function removes old rotated log archives by retention age.
 #
 # 1. "LOG_FILE" is the destination log file.
+# 2. "SETTINGS" is the current parsed logger settings.
 #
 # Returns: None.
 # ------------------------------------------------------------------------------
-def prune_rotated_logs(LOG_FILE: Path) -> None:
-    KEEP_DAYS = get_log_rotate_keep_days()
-    if KEEP_DAYS < 1:
+def prune_rotated_logs(LOG_FILE: Path, SETTINGS: LoggerSettings) -> None:
+    if SETTINGS.rotate_keep_days < 1:
         return
 
-    CUTOFF = now_local() - timedelta(days=KEEP_DAYS)
+    CUTOFF = now_local() - timedelta(days=SETTINGS.rotate_keep_days)
     PATTERN = f"{LOG_FILE.stem}.*.log.gz"
 
     for PATH in LOG_FILE.parent.glob(PATTERN):
@@ -214,57 +386,3 @@ def prune_rotated_logs(LOG_FILE: Path) -> None:
             PATH.unlink()
         except OSError:
             continue
-
-
-# ------------------------------------------------------------------------------
-# This function reads configured maximum log size in bytes.
-#
-# Returns: Positive byte count, defaulting to 100 MiB.
-# ------------------------------------------------------------------------------
-def get_log_rotate_max_bytes() -> int:
-    DEFAULT_BYTES = 100 * 1024 * 1024
-    RAW_VALUE = os.getenv("LOG_ROTATE_MAX_MIB", "100").strip()
-
-    if not RAW_VALUE.isdigit():
-        return DEFAULT_BYTES
-
-    VALUE_MIB = int(RAW_VALUE)
-    if VALUE_MIB < 1:
-        return DEFAULT_BYTES
-
-    return VALUE_MIB * 1024 * 1024
-
-
-# ------------------------------------------------------------------------------
-# This function reads configured daily rollover toggle.
-#
-# Returns: True when daily rollover is enabled, defaulting to true.
-# ------------------------------------------------------------------------------
-def get_log_rotate_daily() -> bool:
-    RAW_VALUE = os.getenv("LOG_ROTATE_DAILY", "true").strip().lower()
-
-    if RAW_VALUE in {"1", "true", "yes", "on"}:
-        return True
-
-    if RAW_VALUE in {"0", "false", "no", "off"}:
-        return False
-
-    return True
-
-
-# ------------------------------------------------------------------------------
-# This function reads configured rotated-log retention period in days.
-#
-# Returns: Positive day count, defaulting to 14 days.
-# ------------------------------------------------------------------------------
-def get_log_rotate_keep_days() -> int:
-    RAW_VALUE = os.getenv("LOG_ROTATE_KEEP_DAYS", "14").strip()
-
-    if not RAW_VALUE.isdigit():
-        return 14
-
-    VALUE = int(RAW_VALUE)
-    if VALUE < 1:
-        return 14
-
-    return VALUE
