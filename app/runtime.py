@@ -85,6 +85,24 @@ def format_average_speed(TRANSFERRED_BYTES: int, DURATION_SECONDS: int) -> str:
 
 
 # ------------------------------------------------------------------------------
+# This function formats delete totals using natural singular and plural labels.
+#
+# 1. "DELETED_FILES" is the deleted file count.
+# 2. "DELETED_DIRECTORIES" is the deleted directory count.
+#
+# Returns: Human-readable delete summary line for completion messages.
+# ------------------------------------------------------------------------------
+def format_delete_summary(DELETED_FILES: int, DELETED_DIRECTORIES: int) -> str:
+    FILE_LABEL = "file" if DELETED_FILES == 1 else "files"
+    DIRECTORY_LABEL = "directory" if DELETED_DIRECTORIES == 1 else "directories"
+    return (
+        "Deleted: "
+        f"{DELETED_FILES} {FILE_LABEL}, "
+        f"{DELETED_DIRECTORIES} {DIRECTORY_LABEL}"
+    )
+
+
+# ------------------------------------------------------------------------------
 # This function logs effective non-secret backup settings for debug runs.
 #
 # 1. "CONFIG" is runtime configuration.
@@ -337,9 +355,10 @@ def run_backup(
 
     if CONFIG.backup_delete_removed:
         STATUS_LINES.append(
-            "Deleted: "
-            f"{SUMMARY.deleted_files} files, "
-            f"{SUMMARY.deleted_directories} directories",
+            format_delete_summary(
+                SUMMARY.deleted_files,
+                SUMMARY.deleted_directories,
+            ),
         )
 
     if SUMMARY.transferred_files > 0:

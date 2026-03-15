@@ -18,6 +18,7 @@ from app.config import AppConfig
 from app.runtime import (
     SafetyNetEnforcementResult,
     clear_safety_net_marker,
+    format_delete_summary,
     enforce_safety_net,
     format_average_speed,
     format_duration_clock,
@@ -53,6 +54,24 @@ class TestRuntime(unittest.TestCase):
 # --------------------------------------------------------------------------
     def test_format_average_speed_uses_safe_duration_floor(self) -> None:
         self.assertEqual(format_average_speed(1048576, 0), "1.00 MiB/s")
+
+# --------------------------------------------------------------------------
+# This test confirms delete-summary formatting uses natural singular and
+# plural labels for files and directories.
+# --------------------------------------------------------------------------
+    def test_format_delete_summary_uses_natural_pluralisation(self) -> None:
+        self.assertEqual(
+            format_delete_summary(0, 0),
+            "Deleted: 0 files, 0 directories",
+        )
+        self.assertEqual(
+            format_delete_summary(1, 0),
+            "Deleted: 1 file, 0 directories",
+        )
+        self.assertEqual(
+            format_delete_summary(2, 1),
+            "Deleted: 2 files, 1 directory",
+        )
 
 # --------------------------------------------------------------------------
 # This test confirms marker helpers return success on happy-path writes and
