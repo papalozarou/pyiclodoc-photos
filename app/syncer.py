@@ -43,6 +43,8 @@ class SyncResult:
     transferred_bytes: int
     skipped_files: int
     error_files: int
+    transfer_error_files: int = 0
+    derived_error_files: int = 0
 
 
 # ------------------------------------------------------------------------------
@@ -189,7 +191,7 @@ def perform_incremental_sync(
     )
     TRANSFERRED = 0
     TRANSFERRED_BYTES = 0
-    ERRORS = 0
+    TRANSFER_ERRORS = 0
     FAILURE_REASON_COUNTS: dict[str, int] = {}
 
     if LOG_FILE is not None:
@@ -217,7 +219,7 @@ def perform_incremental_sync(
                 f"workers={WORKER_COUNT}, sync_workers={SYNC_DOWNLOAD_WORKERS}",
             )
 
-        TRANSFERRED, TRANSFERRED_BYTES, ERRORS, FAILURE_REASON_COUNTS = run_transfers(
+        TRANSFERRED, TRANSFERRED_BYTES, TRANSFER_ERRORS, FAILURE_REASON_COUNTS = run_transfers(
             CLIENT,
             OUTPUT_DIR,
             TRANSFER_CANDIDATES,
@@ -232,6 +234,7 @@ def perform_incremental_sync(
         log_line(LOG_FILE, "info", "Album reconciliation started.")
 
     ALBUM_RESULT = None
+    DERIVED_ERRORS = 0
 
     if BACKUP_ALBUMS_ENABLED:
         VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
@@ -243,6 +246,7 @@ def perform_incremental_sync(
             BACKUP_ALBUM_LINKS_MODE,
             LOG_FILE,
         )
+        DERIVED_ERRORS = ALBUM_RESULT.errors
 
     if LOG_FILE is not None and BACKUP_ALBUMS_ENABLED:
         log_line(
@@ -283,7 +287,7 @@ def perform_incremental_sync(
             LOG_FILE,
             "info",
             "Transfer finished. "
-            f"transferred={TRANSFERRED}, skipped={SKIPPED}, errors={ERRORS}.",
+            f"transferred={TRANSFERRED}, skipped={SKIPPED}, errors={TRANSFER_ERRORS}.",
         )
         if FAILURE_REASON_COUNTS:
             DETAIL_TEXT = ", ".join(
@@ -296,10 +300,14 @@ def perform_incremental_sync(
                 f"Transfer failure reason detail: {DETAIL_TEXT}",
             )
 
+    TOTAL_ERRORS = TRANSFER_ERRORS + DERIVED_ERRORS
+
     return SyncResult(
         total_files=len(FILES),
         transferred_files=TRANSFERRED,
         transferred_bytes=TRANSFERRED_BYTES,
         skipped_files=SKIPPED,
-        error_files=ERRORS,
+        error_files=TOTAL_ERRORS,
+        transfer_error_files=TRANSFER_ERRORS,
+        derived_error_files=DERIVED_ERRORS,
     ), NEW_MANIFEST
