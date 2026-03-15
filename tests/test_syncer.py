@@ -116,6 +116,75 @@ class TestSyncer(unittest.TestCase):
             self.assertIn("albums/Trips/IMG_0001.JPG", MANIFEST)
 
 # --------------------------------------------------------------------------
+# This test confirms the sync honours copy-only album mode without creating
+# hard links to the canonical source.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_uses_strict_copy_mode_for_albums(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0001.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-1",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0001.JPG",
+            album_paths=("albums/Trips",),
+        )
+        CLIENT = FakeClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            SUMMARY, MANIFEST = perform_incremental_sync(
+                CLIENT,
+                TMPDIR_PATH,
+                {},
+                BACKUP_ALBUM_LINKS_MODE="copy",
+            )
+            LIBRARY_PATH = TMPDIR_PATH / ENTRY.path
+            ALBUM_PATH = TMPDIR_PATH / "albums/Trips/IMG_0001.JPG"
+
+            self.assertEqual(SUMMARY.transferred_files, 1)
+            self.assertTrue(ALBUM_PATH.exists())
+            self.assertFalse(os.path.samefile(LIBRARY_PATH, ALBUM_PATH))
+            self.assertIn("albums/Trips/IMG_0001.JPG", MANIFEST)
+
+# --------------------------------------------------------------------------
+# This test confirms disabling album output stops both creation and delete
+# management for the albums tree.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_leaves_existing_albums_tree_untouched_when_disabled(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0001.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-1",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0001.JPG",
+            album_paths=("albums/Trips",),
+        )
+        CLIENT = FakeClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            STALE_ALBUM_PATH = TMPDIR_PATH / "albums/Trips/STALE.JPG"
+            STALE_ALBUM_PATH.parent.mkdir(parents=True, exist_ok=True)
+            STALE_ALBUM_PATH.write_bytes(b"stale")
+
+            SUMMARY, MANIFEST = perform_incremental_sync(
+                CLIENT,
+                TMPDIR_PATH,
+                {},
+                BACKUP_DELETE_REMOVED=True,
+                BACKUP_ALBUMS_ENABLED=False,
+            )
+
+            self.assertEqual(SUMMARY.transferred_files, 1)
+            self.assertFalse((TMPDIR_PATH / "albums/Trips/IMG_0001.JPG").exists())
+            self.assertTrue(STALE_ALBUM_PATH.exists())
+            self.assertNotIn("albums/Trips/IMG_0001.JPG", MANIFEST)
+
+# --------------------------------------------------------------------------
 # This test confirms the sync emits verbose planning, transfer, album, and
 # delete diagnostics when debug logging is enabled.
 # --------------------------------------------------------------------------

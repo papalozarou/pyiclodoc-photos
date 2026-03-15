@@ -26,7 +26,6 @@ class AppConfig:
     schedule_monthly_week: str
     schedule_interval_minutes: int
     backup_delete_removed: bool
-    traversal_workers: int
     sync_workers: int
     download_chunk_mib: int
     reauth_interval_days: int
@@ -40,7 +39,6 @@ class AppConfig:
     session_dir: Path
     icloudpd_compat_dir: Path
     safety_net_sample_size: int
-    backup_library_enabled: bool
     backup_albums_enabled: bool
     backup_album_links_mode: str
     backup_include_shared_albums: bool
@@ -177,7 +175,6 @@ def load_config() -> AppConfig:
         schedule_monthly_week=env_value("SCHEDULE_MONTHLY_WEEK", "first").lower(),
         schedule_interval_minutes=env_int("SCHEDULE_INTERVAL_MINUTES", 1440),
         backup_delete_removed=env_bool("BACKUP_DELETE_REMOVED", False),
-        traversal_workers=env_int("SYNC_TRAVERSAL_WORKERS", 1),
         sync_workers=env_workers("SYNC_DOWNLOAD_WORKERS", 0),
         download_chunk_mib=env_int("SYNC_DOWNLOAD_CHUNK_MIB", 4),
         reauth_interval_days=env_int("REAUTH_INTERVAL_DAYS", 30),
@@ -191,7 +188,6 @@ def load_config() -> AppConfig:
         session_dir=SESSION_DIR,
         icloudpd_compat_dir=COMPAT_DIR,
         safety_net_sample_size=env_int("SAFETY_NET_SAMPLE_SIZE", 200),
-        backup_library_enabled=env_bool("BACKUP_LIBRARY_ENABLED", True),
         backup_albums_enabled=env_bool("BACKUP_ALBUMS_ENABLED", True),
         backup_album_links_mode=env_value("BACKUP_ALBUM_LINKS_MODE", "hardlink").lower(),
         backup_include_shared_albums=env_bool("BACKUP_INCLUDE_SHARED_ALBUMS", True),

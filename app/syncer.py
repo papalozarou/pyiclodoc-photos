@@ -222,13 +222,20 @@ def needs_transfer(ENTRY: RemoteEntry, MANIFEST: dict[str, dict[str, Any]]) -> b
 # 1. "CLIENT" is the active iCloud API wrapper.
 # 2. "OUTPUT_DIR" is local backup root.
 # 3. "MANIFEST" is previous metadata.
+# 4. "SYNC_DOWNLOAD_WORKERS" selects transfer concurrency.
+# 5. "LOG_FILE" is optional worker log destination.
+# 6. "BACKUP_DELETE_REMOVED" enables delete reconciliation.
+# 7. "BACKUP_ALBUMS_ENABLED" enables derived album-output management.
+# 8. "BACKUP_ALBUM_LINKS_MODE" selects hard-link or copy-only album output.
+# 9. "BACKUP_ROOT_ALBUMS" is the relative albums root path.
 #
 # Returns: Tuple of sync summary metrics and a refreshed manifest mapping.
 # 
 # Behaviour notes:
 # 1. Only canonical library files participate in transfer decisions.
-# 2. Album views are reconciled after canonical transfers complete.
-# 3. Optional delete handling removes both canonical and derived local paths.
+# 2. Album views are only reconciled when album management is enabled.
+# 3. Optional delete handling removes canonical paths and only managed album
+#    paths.
 # ------------------------------------------------------------------------------
 def perform_incremental_sync(
     CLIENT: ICloudDriveClient,
@@ -237,6 +244,9 @@ def perform_incremental_sync(
     SYNC_DOWNLOAD_WORKERS: int = 0,
     LOG_FILE: Path | None = None,
     BACKUP_DELETE_REMOVED: bool = False,
+    BACKUP_ALBUMS_ENABLED: bool = True,
+    BACKUP_ALBUM_LINKS_MODE: str = "hardlink",
+    BACKUP_ROOT_ALBUMS: str = "albums",
 ) -> tuple[SyncResult, dict[str, dict[str, Any]]]:
     if LOG_FILE is not None:
         log_line(LOG_FILE, "info", "Remote photo listing started.")
@@ -314,19 +324,25 @@ def perform_incremental_sync(
     elif LOG_FILE is not None:
         log_line(LOG_FILE, "info", "Transfer skipped. candidates=0.")
 
-    if LOG_FILE is not None:
+    if LOG_FILE is not None and BACKUP_ALBUMS_ENABLED:
         log_line(LOG_FILE, "info", "Album reconciliation started.")
 
-    VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
-    ALBUM_VIEWS_CREATED, ALBUM_VIEWS_REUSED, ALBUM_VIEWS_SKIPPED = reconcile_album_views(
-        OUTPUT_DIR,
-        FILES,
-        NEW_MANIFEST,
-        VALID_CANONICAL_PATHS,
-        LOG_FILE,
-    )
+    ALBUM_VIEWS_CREATED = 0
+    ALBUM_VIEWS_REUSED = 0
+    ALBUM_VIEWS_SKIPPED = 0
 
-    if LOG_FILE is not None:
+    if BACKUP_ALBUMS_ENABLED:
+        VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
+        ALBUM_VIEWS_CREATED, ALBUM_VIEWS_REUSED, ALBUM_VIEWS_SKIPPED = reconcile_album_views(
+            OUTPUT_DIR,
+            FILES,
+            NEW_MANIFEST,
+            VALID_CANONICAL_PATHS,
+            BACKUP_ALBUM_LINKS_MODE,
+            LOG_FILE,
+        )
+
+    if LOG_FILE is not None and BACKUP_ALBUMS_ENABLED:
         log_line(
             LOG_FILE,
             "info",
@@ -344,6 +360,8 @@ def perform_incremental_sync(
             OUTPUT_DIR,
             FILES,
             NEW_MANIFEST,
+            BACKUP_ALBUMS_ENABLED,
+            BACKUP_ROOT_ALBUMS,
             LOG_FILE,
         )
 
@@ -565,7 +583,8 @@ def apply_remote_modified_time(LOCAL_PATH: Path, MODIFIED: str) -> None:
 # 2. "ENTRIES" is the current remote photo list.
 # 3. "NEW_MANIFEST" is the refreshed manifest under construction.
 # 4. "VALID_CANONICAL_PATHS" is the set of canonical paths verified for use.
-# 5. "LOG_FILE" is optional log file path.
+# 5. "BACKUP_ALBUM_LINKS_MODE" selects hard-link or copy-only output.
+# 6. "LOG_FILE" is optional log file path.
 #
 # Returns: Tuple "(created, reused, skipped_missing_source)".
 # 
@@ -578,6 +597,7 @@ def reconcile_album_views(
     ENTRIES: list[RemoteEntry],
     NEW_MANIFEST: dict[str, dict[str, Any]],
     VALID_CANONICAL_PATHS: set[str],
+    BACKUP_ALBUM_LINKS_MODE: str,
     LOG_FILE: Path | None,
 ) -> tuple[int, int, int]:
     CREATED = 0
@@ -614,7 +634,11 @@ def reconcile_album_views(
 
         for ALBUM_DIR in ENTRY.album_paths:
             TARGET_PATH = OUTPUT_DIR / ALBUM_DIR / ENTRY.download_name
-            WAS_CREATED = create_album_link(SOURCE_PATH, TARGET_PATH)
+            WAS_CREATED = create_album_link(
+                SOURCE_PATH,
+                TARGET_PATH,
+                BACKUP_ALBUM_LINKS_MODE,
+            )
             NEW_MANIFEST[str(TARGET_PATH.relative_to(OUTPUT_DIR))] = {
                 "entry_kind": "album_link",
                 "is_dir": False,
@@ -645,14 +669,19 @@ def reconcile_album_views(
 #
 # 1. "SOURCE_PATH" is the canonical library file.
 # 2. "TARGET_PATH" is the album-view file path.
+# 3. "BACKUP_ALBUM_LINKS_MODE" selects hard-link or copy-only output.
 #
 # Returns: True when a new hard link or copy was created, otherwise False.
 # 
 # N.B.
-# Hard links are preferred because they avoid duplicate data. Copy fallback is
-# retained for filesystems and bind mounts that do not permit linking.
+# Hard links are preferred because they avoid duplicate data. "copy" mode is
+# strict and never attempts a hard link.
 # ------------------------------------------------------------------------------
-def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> bool:
+def create_album_link(
+    SOURCE_PATH: Path,
+    TARGET_PATH: Path,
+    BACKUP_ALBUM_LINKS_MODE: str,
+) -> bool:
     TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if TARGET_PATH.exists():
@@ -660,6 +689,10 @@ def create_album_link(SOURCE_PATH: Path, TARGET_PATH: Path) -> bool:
             return False
 
         TARGET_PATH.unlink()
+
+    if BACKUP_ALBUM_LINKS_MODE == "copy":
+        shutil.copy2(SOURCE_PATH, TARGET_PATH)
+        return True
 
     try:
         os.link(SOURCE_PATH, TARGET_PATH)
@@ -700,7 +733,9 @@ def same_file_contents(LEFT_PATH: Path, RIGHT_PATH: Path) -> bool:
 # 1. "OUTPUT_DIR" is local backup root.
 # 2. "ENTRIES" is the current remote photo list.
 # 3. "NEW_MANIFEST" is the refreshed manifest under construction.
-# 4. "LOG_FILE" is optional log file path.
+# 4. "BACKUP_ALBUMS_ENABLED" decides whether the albums tree is managed.
+# 5. "BACKUP_ROOT_ALBUMS" is the relative albums root path.
+# 6. "LOG_FILE" is optional log file path.
 #
 # Returns: Tuple "(deleted_files, deleted_directories, errors)".
 # 
@@ -712,6 +747,8 @@ def delete_removed_local_paths(
     OUTPUT_DIR: Path,
     ENTRIES: list[RemoteEntry],
     NEW_MANIFEST: dict[str, dict[str, Any]],
+    BACKUP_ALBUMS_ENABLED: bool,
+    BACKUP_ROOT_ALBUMS: str,
     LOG_FILE: Path | None,
 ) -> tuple[int, int, int]:
     DESIRED_PATHS = desired_relative_paths(ENTRIES)
@@ -725,6 +762,9 @@ def delete_removed_local_paths(
             continue
 
         RELATIVE_PATH = str(PATH.relative_to(OUTPUT_DIR))
+
+        if not BACKUP_ALBUMS_ENABLED and is_path_within_root(RELATIVE_PATH, BACKUP_ROOT_ALBUMS):
+            continue
 
         if RELATIVE_PATH in DESIRED_PATHS or RELATIVE_PATH in PROTECTED_PATHS:
             continue
@@ -747,6 +787,24 @@ def delete_removed_local_paths(
 
     DELETED_DIRECTORIES += prune_empty_directories(OUTPUT_DIR, LOG_FILE)
     return DELETED_FILES, DELETED_DIRECTORIES, ERRORS
+
+
+# ------------------------------------------------------------------------------
+# This function checks whether a relative path sits under a managed root path.
+#
+# 1. "RELATIVE_PATH" is the output-relative file path.
+# 2. "ROOT_PATH" is the managed relative root path.
+#
+# Returns: True when "RELATIVE_PATH" is inside or equal to "ROOT_PATH".
+# ------------------------------------------------------------------------------
+def is_path_within_root(RELATIVE_PATH: str, ROOT_PATH: str) -> bool:
+    CLEAN_ROOT = ROOT_PATH.strip("/").replace("\\", "/")
+    CLEAN_RELATIVE_PATH = RELATIVE_PATH.strip("/").replace("\\", "/")
+
+    if not CLEAN_ROOT:
+        return False
+
+    return CLEAN_RELATIVE_PATH == CLEAN_ROOT or CLEAN_RELATIVE_PATH.startswith(f"{CLEAN_ROOT}/")
 
 
 # ------------------------------------------------------------------------------

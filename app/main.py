@@ -124,14 +124,14 @@ def validate_config(CONFIG: AppConfig) -> list[str]:
             "SCHEDULE_INTERVAL_MINUTES must be at least 1 when RUN_ONCE is false."
         )
 
-    if CONFIG.traversal_workers < 1 or CONFIG.traversal_workers > 8:
-        ERRORS.append("SYNC_TRAVERSAL_WORKERS must be an integer between 1 and 8.")
-
     if CONFIG.sync_workers < 0 or CONFIG.sync_workers > 16:
         ERRORS.append("SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.")
 
     if CONFIG.download_chunk_mib < 1 or CONFIG.download_chunk_mib > 16:
         ERRORS.append("SYNC_DOWNLOAD_CHUNK_MIB must be an integer between 1 and 16.")
+
+    if CONFIG.backup_album_links_mode not in {"hardlink", "copy"}:
+        ERRORS.append("BACKUP_ALBUM_LINKS_MODE must be one of: hardlink, copy.")
 
     return ERRORS
 
@@ -791,6 +791,9 @@ def run_backup(
         CONFIG.sync_workers,
         LOG_FILE,
         BACKUP_DELETE_REMOVED=CONFIG.backup_delete_removed,
+        BACKUP_ALBUMS_ENABLED=CONFIG.backup_albums_enabled,
+        BACKUP_ALBUM_LINKS_MODE=CONFIG.backup_album_links_mode,
+        BACKUP_ROOT_ALBUMS=CONFIG.backup_root_albums,
     )
     log_line(
         LOG_FILE,
@@ -857,11 +860,12 @@ def log_effective_backup_settings(CONFIG: AppConfig, LOG_FILE: Path) -> None:
         f"schedule_backup_time={CONFIG.schedule_backup_time}, "
         f"schedule_weekdays={CONFIG.schedule_weekdays}, "
         f"schedule_monthly_week={CONFIG.schedule_monthly_week}, "
-        f"sync_traversal_workers={CONFIG.traversal_workers}, "
         f"sync_download_workers={SYNC_WORKERS_LABEL}, "
         f"effective_download_workers={EFFECTIVE_WORKERS}, "
         f"sync_download_chunk_mib={CONFIG.download_chunk_mib}, "
-        f"backup_delete_removed={CONFIG.backup_delete_removed}",
+        f"backup_delete_removed={CONFIG.backup_delete_removed}, "
+        f"backup_albums_enabled={CONFIG.backup_albums_enabled}, "
+        f"backup_album_links_mode={CONFIG.backup_album_links_mode}",
     )
 
 

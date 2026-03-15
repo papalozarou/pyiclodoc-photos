@@ -538,6 +538,9 @@ class ICloudDriveClient:
 # does not need to understand pyicloud album objects directly.
 # --------------------------------------------------------------------------
     def _read_album_membership(self) -> dict[str, tuple[str, ...]]:
+        if not self.config.backup_albums_enabled:
+            return {}
+
         PHOTOS = self._get_photos_service()
 
         if PHOTOS is None:

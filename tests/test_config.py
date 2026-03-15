@@ -41,6 +41,5 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(CONFIG.manifest_path.name, "pyiclodoc-photos-manifest.json")
         self.assertEqual(CONFIG.auth_state_path.name, "pyiclodoc-photos-auth_state.json")
         self.assertEqual(CONFIG.heartbeat_path.name, "pyiclodoc-photos-heartbeat.txt")
-        self.assertTrue(CONFIG.backup_library_enabled)
         self.assertTrue(CONFIG.backup_albums_enabled)
         self.assertEqual(CONFIG.backup_album_links_mode, "hardlink")

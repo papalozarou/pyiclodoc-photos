@@ -84,15 +84,11 @@ and then immediately starts again.
 
 ### Transfer and backup behaviour
 
-- `<SVC>_SYNC_TRAVERSAL_WORKERS`: retained for parity with the drive project.
-  Current photo listing does not depend on deep directory traversal in the same
-  way as the Drive worker.
 - `<SVC>_SYNC_DOWNLOAD_WORKERS`: `auto` or an integer from `1` to `16`.
 - `<SVC>_SYNC_DOWNLOAD_CHUNK_MIB`: streamed download chunk size in MiB.
 - `<SVC>_BACKUP_DELETE_REMOVED`: remove local files and empty directories when
   they no longer exist remotely.
-- `<SVC>_BACKUP_LIBRARY_ENABLED`: build the canonical `library/` tree.
-- `<SVC>_BACKUP_ALBUMS_ENABLED`: build the derived `albums/` tree.
+- `<SVC>_BACKUP_ALBUMS_ENABLED`: manage the derived `albums/` tree.
 - `<SVC>_BACKUP_ALBUM_LINKS_MODE`: `hardlink` or `copy`.
 - `<SVC>_BACKUP_INCLUDE_SHARED_ALBUMS`: include shared albums in `albums/`.
 - `<SVC>_BACKUP_INCLUDE_FAVOURITES`: include the favourites album in
@@ -101,8 +97,13 @@ and then immediately starts again.
 N.B.
 
 `hardlink` is the opinionated default. It avoids duplicate data where the host
-filesystem and bind mount allow hard links. If hard links are not possible, the
-worker falls back to copying files into the album view.
+filesystem and bind mount allow hard links. `copy` is strict copy-only mode and
+does not attempt hard links first.
+
+N.B.
+
+When `<SVC>_BACKUP_ALBUMS_ENABLED=false`, the worker stops creating, refreshing,
+and deleting files under `albums/`. Existing album output is left untouched.
 
 ## Logging
 
