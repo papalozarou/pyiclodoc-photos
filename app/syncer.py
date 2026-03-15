@@ -231,13 +231,11 @@ def perform_incremental_sync(
     if LOG_FILE is not None and BACKUP_ALBUMS_ENABLED:
         log_line(LOG_FILE, "info", "Album reconciliation started.")
 
-    ALBUM_VIEWS_CREATED = 0
-    ALBUM_VIEWS_REUSED = 0
-    ALBUM_VIEWS_SKIPPED = 0
+    ALBUM_RESULT = None
 
     if BACKUP_ALBUMS_ENABLED:
         VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
-        ALBUM_VIEWS_CREATED, ALBUM_VIEWS_REUSED, ALBUM_VIEWS_SKIPPED = reconcile_album_views(
+        ALBUM_RESULT = reconcile_album_views(
             OUTPUT_DIR,
             FILES,
             NEW_MANIFEST,
@@ -251,9 +249,10 @@ def perform_incremental_sync(
             LOG_FILE,
             "info",
             "Album reconciliation finished. "
-            f"created={ALBUM_VIEWS_CREATED}, "
-            f"reused={ALBUM_VIEWS_REUSED}, "
-            f"skipped_missing_source={ALBUM_VIEWS_SKIPPED}.",
+            f"created={ALBUM_RESULT.created}, "
+            f"reused={ALBUM_RESULT.reused}, "
+            f"skipped_missing_source={ALBUM_RESULT.skipped_missing_source}, "
+            f"errors={ALBUM_RESULT.errors}.",
         )
 
     if BACKUP_DELETE_REMOVED:

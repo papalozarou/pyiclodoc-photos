@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tests._stubs import install_dependency_stubs
 
@@ -286,6 +287,58 @@ class TestSyncer(unittest.TestCase):
             self.assertEqual(SUMMARY.error_files, 1)
             self.assertFalse((TMPDIR_PATH / "albums/Trips/IMG_0003.JPG").exists())
             self.assertNotIn("albums/Trips/IMG_0003.JPG", MANIFEST)
+
+# --------------------------------------------------------------------------
+# This test confirms album-view filesystem failures are counted and logged
+# without failing canonical transfer success.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_treats_album_refresh_failures_as_best_effort(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0006.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-6",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0006.JPG",
+            album_paths=("albums/Trips",),
+        )
+        CLIENT = FakeClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+
+            self.addCleanup(self._restore_log_level)
+            self._set_debug_logging()
+
+            with patch(
+                "app.album_reconcile.create_album_link",
+                side_effect=OSError("permission denied"),
+            ):
+                SUMMARY, MANIFEST = perform_incremental_sync(
+                    CLIENT,
+                    TMPDIR_PATH,
+                    {},
+                    LOG_FILE=LOG_FILE,
+                )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertEqual(SUMMARY.transferred_files, 1)
+            self.assertEqual(SUMMARY.error_files, 0)
+            self.assertTrue((TMPDIR_PATH / ENTRY.path).exists())
+            self.assertFalse((TMPDIR_PATH / "albums/Trips/IMG_0006.JPG").exists())
+            self.assertNotIn("albums/Trips/IMG_0006.JPG", MANIFEST)
+            self.assertIn(
+                "Album view refresh failed: albums/Trips/IMG_0006.JPG -> "
+                "library/2026/03/14/IMG_0006.JPG (permission denied)",
+                LOG_TEXT,
+            )
+            self.assertIn(
+                "Album reconciliation finished. created=0, reused=0, "
+                "skipped_missing_source=0, errors=1.",
+                LOG_TEXT,
+            )
 
 # --------------------------------------------------------------------------
 # This test confirms transfer failure detail aggregates distinct per-file

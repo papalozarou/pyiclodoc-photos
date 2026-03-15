@@ -14,6 +14,23 @@ from app.logger import log_line
 
 
 # ------------------------------------------------------------------------------
+# This data class records derived album-output reconciliation totals.
+# ------------------------------------------------------------------------------
+from dataclasses import dataclass
+
+
+# ------------------------------------------------------------------------------
+# This data class records album reconciliation outcomes for one sync run.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class AlbumReconcileResult:
+    created: int
+    reused: int
+    skipped_missing_source: int
+    errors: int
+
+
+# ------------------------------------------------------------------------------
 # This function creates or refreshes album views for transferred assets.
 #
 # 1. "OUTPUT_DIR" is local backup root.
@@ -23,11 +40,13 @@ from app.logger import log_line
 # 5. "BACKUP_ALBUM_LINKS_MODE" selects hard-link or copy-only output.
 # 6. "LOG_FILE" is optional log file path.
 #
-# Returns: Tuple "(created, reused, skipped_missing_source)".
+# Returns: "AlbumReconcileResult" describing created, reused, skipped, and
+# error totals.
 #
 # N.B.
-# Album view creation is intentionally best-effort. Missing canonical files are
-# skipped quietly because a failed canonical transfer has already been counted.
+# Album view creation is intentionally best-effort. Missing canonical files and
+# derived-output filesystem failures are counted here so canonical transfer
+# success does not depend on the optional albums tree.
 # ------------------------------------------------------------------------------
 def reconcile_album_views(
     OUTPUT_DIR: Path,
@@ -36,10 +55,11 @@ def reconcile_album_views(
     VALID_CANONICAL_PATHS: set[str],
     BACKUP_ALBUM_LINKS_MODE: str,
     LOG_FILE: Path | None,
-) -> tuple[int, int, int]:
+) -> AlbumReconcileResult:
     CREATED = 0
     REUSED = 0
     SKIPPED_MISSING_SOURCE = 0
+    ERRORS = 0
 
     for ENTRY in ENTRIES:
         if not ENTRY.album_paths:
@@ -71,11 +91,25 @@ def reconcile_album_views(
 
         for ALBUM_DIR in ENTRY.album_paths:
             TARGET_PATH = OUTPUT_DIR / ALBUM_DIR / ENTRY.download_name
-            WAS_CREATED = create_album_link(
-                SOURCE_PATH,
-                TARGET_PATH,
-                BACKUP_ALBUM_LINKS_MODE,
-            )
+            try:
+                WAS_CREATED = create_album_link(
+                    SOURCE_PATH,
+                    TARGET_PATH,
+                    BACKUP_ALBUM_LINKS_MODE,
+                )
+            except OSError as ERROR:
+                ERRORS += 1
+
+                if LOG_FILE is not None:
+                    log_line(
+                        LOG_FILE,
+                        "error",
+                        "Album view refresh failed: "
+                        f"{TARGET_PATH.relative_to(OUTPUT_DIR)} -> {ENTRY.path} "
+                        f"({ERROR})",
+                    )
+                continue
+
             NEW_MANIFEST[str(TARGET_PATH.relative_to(OUTPUT_DIR))] = {
                 "entry_kind": "album_link",
                 "is_dir": False,
@@ -98,7 +132,12 @@ def reconcile_album_views(
                 f"(created={str(WAS_CREATED).lower()})",
             )
 
-    return CREATED, REUSED, SKIPPED_MISSING_SOURCE
+    return AlbumReconcileResult(
+        created=CREATED,
+        reused=REUSED,
+        skipped_missing_source=SKIPPED_MISSING_SOURCE,
+        errors=ERRORS,
+    )
 
 
 # ------------------------------------------------------------------------------
