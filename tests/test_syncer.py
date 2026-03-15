@@ -5,6 +5,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -14,7 +15,12 @@ from tests._stubs import install_dependency_stubs
 install_dependency_stubs()
 
 from app.icloud_client import DownloadResult
-from app.syncer import perform_incremental_sync
+from app.syncer import (
+    collect_local_files,
+    collect_mismatches,
+    perform_incremental_sync,
+    run_first_time_safety_net,
+)
 
 
 # ------------------------------------------------------------------------------
@@ -96,9 +102,88 @@ class ExplodingClient(FakeClient):
 
 
 # ------------------------------------------------------------------------------
+# This helper mimics the subset of Path behaviour used by mismatch tests.
+# ------------------------------------------------------------------------------
+class FakeStatPath:
+    def __init__(self, LABEL: str, UID: int, GID: int):
+        self.label = LABEL
+        self.uid = UID
+        self.gid = GID
+
+    def stat(self):
+        return type("Stat", (), {"st_uid": self.uid, "st_gid": self.gid})()
+
+    def __str__(self) -> str:
+        return self.label
+
+
+# ------------------------------------------------------------------------------
 # These tests verify canonical sync and derived album output behaviour.
 # ------------------------------------------------------------------------------
 class TestSyncer(unittest.TestCase):
+# --------------------------------------------------------------------------
+# This test confirms the bounded local-file collector ignores directories and
+# stops once the requested sample size has been reached.
+# --------------------------------------------------------------------------
+    def test_collect_local_files_respects_sample_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            (TMPDIR_PATH / "dir").mkdir()
+            for INDEX in range(3):
+                (TMPDIR_PATH / f"file-{INDEX}.txt").write_text("x", encoding="utf-8")
+
+            RESULT = collect_local_files(TMPDIR_PATH, 2)
+            self.assertEqual(len(RESULT), 2)
+            self.assertTrue(all(PATH.is_file() for PATH in RESULT))
+
+
+# --------------------------------------------------------------------------
+# This test confirms mismatch collection ignores matching files and stops at
+# the configured output limit.
+# --------------------------------------------------------------------------
+    def test_collect_mismatches_filters_matches_and_respects_limit(self) -> None:
+        FIRST_PATH = FakeStatPath("/tmp/a", 1000, 1000)
+        SECOND_PATH = FakeStatPath("/tmp/b", 1001, 1000)
+        THIRD_PATH = FakeStatPath("/tmp/c", 1002, 1003)
+
+        RESULT = collect_mismatches(
+            [FIRST_PATH, SECOND_PATH, THIRD_PATH],
+            1000,
+            1000,
+            LIMIT=1,
+        )
+
+        self.assertEqual(len(RESULT), 1)
+        self.assertIn("/tmp/b", RESULT[0])
+
+# --------------------------------------------------------------------------
+# This test confirms the first-run safety net passes cleanly when no files
+# exist under the output root.
+# --------------------------------------------------------------------------
+    def test_run_first_time_safety_net_passes_when_output_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            RESULT = run_first_time_safety_net(Path(TMPDIR), 10)
+
+        self.assertFalse(RESULT.should_block)
+        self.assertEqual(RESULT.mismatched_samples, [])
+
+# --------------------------------------------------------------------------
+# This test confirms the first-run safety net blocks when sampled ownership
+# does not match the current runtime user and group.
+# --------------------------------------------------------------------------
+    def test_run_first_time_safety_net_blocks_on_mismatch(self) -> None:
+        SAMPLE_FILE = FakeStatPath("/tmp/photo.jpg", 2000, 3000)
+
+        with patch("app.syncer.collect_local_files", return_value=[SAMPLE_FILE]):
+            with patch("app.syncer.os.getuid", return_value=1000):
+                with patch("app.syncer.os.getgid", return_value=1000):
+                    RESULT = run_first_time_safety_net(Path("/tmp/out"), 10)
+
+        self.assertTrue(RESULT.should_block)
+        self.assertEqual(RESULT.expected_uid, 1000)
+        self.assertEqual(RESULT.expected_gid, 1000)
+        self.assertIn("/tmp/photo.jpg", RESULT.mismatched_samples[0])
+
 # --------------------------------------------------------------------------
 # This test confirms the sync creates canonical files and derived album
 # views from one remote photo entry.
@@ -267,6 +352,52 @@ class TestSyncer(unittest.TestCase):
             self.assertEqual(SUMMARY.error_files, 1)
             self.assertIn("File transfer failed: library/2026/03/14/IMG_0002.JPG (timeout)", LOG_TEXT)
             self.assertIn("Transfer failure reason detail: timeout=1", LOG_TEXT)
+
+# --------------------------------------------------------------------------
+# This test confirms the sync logs the zero-candidate transfer skip path when
+# the manifest already matches the remote entry set.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_logs_transfer_skipped_when_no_candidates_exist(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0002.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-2",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0002.JPG",
+        )
+        CLIENT = FakeClient([ENTRY])
+        MANIFEST = {
+            ENTRY.path: {
+                "asset_id": "asset-2",
+                "album_paths": [],
+                "created": ENTRY.created,
+                "download_name": ENTRY.download_name,
+                "is_dir": False,
+                "modified": ENTRY.modified,
+                "size": ENTRY.size,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+
+            self.addCleanup(self._restore_log_level)
+            self._set_debug_logging()
+
+            SUMMARY, NEW_MANIFEST = perform_incremental_sync(
+                CLIENT,
+                Path(TMPDIR),
+                MANIFEST,
+                LOG_FILE=LOG_FILE,
+            )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertEqual(SUMMARY.transferred_files, 0)
+            self.assertEqual(SUMMARY.skipped_files, 1)
+            self.assertIn("Transfer skipped. candidates=0.", LOG_TEXT)
+            self.assertIn(ENTRY.path, NEW_MANIFEST)
 
 # --------------------------------------------------------------------------
 # This test confirms album outputs are not derived from stale canonical files
