@@ -6,7 +6,8 @@ It should have all the bits you need for real-world usage, such as:
 
 * persistent auth/session state;
 * manifest-driven incremental sync;
-* optional `until_found` for faster newest-first incremental runs;
+* optional `until_found` for faster canonical-library discovery when delete and
+  album management are disabled;
 * one-shot and scheduled modes;
 * Telegram-driven auth and manual backup control;
 * protection of existing backups via a first-run safety net;

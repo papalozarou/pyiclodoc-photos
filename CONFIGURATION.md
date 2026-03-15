@@ -107,14 +107,19 @@ N.B.
 
 `until_found` stops scanning once it has seen the configured number of
 consecutive unchanged canonical entries. It can reduce remote listing work on
-incremental runs, but `full` remains the safer default when you want the most
-conservative behaviour.
+incremental runs, but only for canonical-library discovery. `full` remains the
+safer default when you want the most conservative behaviour.
 
 N.B.
 
 `until_found` cannot be combined with `<SVC>_BACKUP_DELETE_REMOVED=true` or
 `<SVC>_BACKUP_ALBUMS_ENABLED=true`. Both of those features require a full
 authoritative remote snapshot.
+
+N.B.
+
+With those restrictions in place, `until_found` is best thought of as a
+library-discovery optimisation rather than a general reduced-work mode.
 
 N.B.
 

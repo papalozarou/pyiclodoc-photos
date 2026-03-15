@@ -63,6 +63,8 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
 - `until_found` is only safe for canonical-library discovery. Delete
   reconciliation and album management require a full remote snapshot, so the
   worker does not support `until_found` with those features enabled.
+- in practice, that means `until_found` reduces canonical library discovery
+  work only. It is not a general shortcut for every backup phase.
 - Canonical files are written under `library/<year>/<month>/<day>/`.
 - When two assets would otherwise collide on the same canonical dated path,
   the worker adds a deterministic suffix before the file extension.
