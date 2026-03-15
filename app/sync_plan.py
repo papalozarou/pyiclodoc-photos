@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 from typing import Any
+from typing import TYPE_CHECKING
 
-from app.icloud_client import RemoteEntry
 from app.logger import log_line
+
+if TYPE_CHECKING:
+    from app.icloud_client import RemoteEntry
 
 
 # ------------------------------------------------------------------------------
@@ -58,6 +61,18 @@ def needs_transfer(ENTRY: RemoteEntry, MANIFEST: dict[str, dict[str, Any]]) -> b
         return True
 
     return False
+
+
+# ------------------------------------------------------------------------------
+# This function decides whether a file already matches manifest state.
+#
+# 1. "ENTRY" is current remote metadata.
+# 2. "MANIFEST" is previous run metadata.
+#
+# Returns: True when the manifest already reflects the current remote entry.
+# ------------------------------------------------------------------------------
+def entry_matches_manifest(ENTRY: RemoteEntry, MANIFEST: dict[str, dict[str, Any]]) -> bool:
+    return not needs_transfer(ENTRY, MANIFEST)
 
 
 # ------------------------------------------------------------------------------

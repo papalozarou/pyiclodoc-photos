@@ -55,6 +55,11 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
 
 - Incremental sync uses `pyiclodoc-photos-manifest.json` and skips unchanged
   files.
+- `BACKUP_DISCOVERY_MODE=full` scans the full remote photo listing each run.
+- `BACKUP_DISCOVERY_MODE=until_found` stops after
+  `BACKUP_UNTIL_FOUND_COUNT` consecutive unchanged entries in `All Photos`.
+- `full` remains the safer default. `until_found` is an explicit performance
+  optimisation that relies on `pyicloud`'s documented `All Photos` ordering.
 - Canonical files are written under `library/<year>/<month>/<day>/`.
 - When two assets would otherwise collide on the same canonical dated path,
   the worker adds a deterministic suffix before the file extension.

@@ -41,20 +41,36 @@ class TestMainEntrypoint(unittest.TestCase):
 # --------------------------------------------------------------------------
     def test_validate_config_reports_expected_errors(self) -> None:
         CONFIG = self._create_config(Path("/tmp/test-main"))
-        CONFIG = AppConfig(**{
+        INVALID_MODE_CONFIG = AppConfig(**{
             **CONFIG.__dict__,
             "icloud_email": "",
             "icloud_password": "",
+            "backup_discovery_mode": "bad",
             "sync_workers": 99,
             "download_chunk_mib": 99,
             "backup_album_links_mode": "bad",
         })
+        INVALID_THRESHOLD_CONFIG = AppConfig(**{
+            **CONFIG.__dict__,
+            "backup_discovery_mode": "until_found",
+            "backup_until_found_count": 0,
+        })
 
-        ERRORS = validate_config(CONFIG)
+        ERRORS = validate_config(INVALID_MODE_CONFIG)
+        THRESHOLD_ERRORS = validate_config(INVALID_THRESHOLD_CONFIG)
 
         self.assertIn("ICLOUD_EMAIL is required.", ERRORS)
         self.assertIn("ICLOUD_PASSWORD is required.", ERRORS)
-        self.assertIn("SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.", ERRORS)
+        self.assertIn("BACKUP_DISCOVERY_MODE must be one of: full, until_found.", ERRORS)
+        self.assertIn(
+            "BACKUP_UNTIL_FOUND_COUNT must be at least 1 when "
+            "BACKUP_DISCOVERY_MODE is until_found.",
+            THRESHOLD_ERRORS,
+        )
+        self.assertIn(
+            "SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.",
+            ERRORS,
+        )
         self.assertIn("SYNC_DOWNLOAD_CHUNK_MIB must be an integer between 1 and 16.", ERRORS)
         self.assertIn("BACKUP_ALBUM_LINKS_MODE must be one of: hardlink, copy.", ERRORS)
 
@@ -190,6 +206,8 @@ class TestMainEntrypoint(unittest.TestCase):
             schedule_weekdays="monday",
             schedule_monthly_week="first",
             schedule_interval_minutes=1440,
+            backup_discovery_mode="full",
+            backup_until_found_count=50,
             backup_delete_removed=False,
             sync_workers=0,
             download_chunk_mib=4,

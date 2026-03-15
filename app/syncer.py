@@ -170,7 +170,7 @@ def perform_incremental_sync(
     if LOG_FILE is not None:
         log_line(LOG_FILE, "info", "Remote photo listing started.")
 
-    ENTRIES = CLIENT.list_entries()
+    ENTRIES = CLIENT.list_entries_for_sync(MANIFEST)
     FILES = [ENTRY for ENTRY in ENTRIES if not ENTRY.is_dir]
 
     if LOG_FILE is not None:

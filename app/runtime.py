@@ -107,6 +107,8 @@ def log_effective_backup_settings(
         f"schedule_backup_time={CONFIG.schedule_backup_time}, "
         f"schedule_weekdays={CONFIG.schedule_weekdays}, "
         f"schedule_monthly_week={CONFIG.schedule_monthly_week}, "
+        f"backup_discovery_mode={CONFIG.backup_discovery_mode}, "
+        f"backup_until_found_count={CONFIG.backup_until_found_count}, "
         f"sync_download_workers={SYNC_WORKERS_LABEL}, "
         f"effective_download_workers={EFFECTIVE_WORKERS}, "
         f"sync_download_chunk_mib={CONFIG.download_chunk_mib}, "

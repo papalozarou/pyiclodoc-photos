@@ -110,6 +110,8 @@ def create_config() -> AppConfig:
         schedule_weekdays="monday",
         schedule_monthly_week="first",
         schedule_interval_minutes=1440,
+        backup_discovery_mode="full",
+        backup_until_found_count=50,
         backup_delete_removed=False,
         sync_workers=0,
         download_chunk_mib=4,
@@ -320,6 +322,40 @@ class TestIcloudClient(unittest.TestCase):
         self.assertEqual(ENTRIES[0].album_paths, ("albums/Favourites", "albums/Trips"))
 
 # --------------------------------------------------------------------------
+# This test confirms manifest-aware listing uses the full-scan cache refresh
+# path when the configured discovery mode is "full".
+# --------------------------------------------------------------------------
+    def test_list_entries_for_sync_uses_full_scan_when_mode_is_full(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        CLIENT.api = SimpleNamespace()
+        CLIENT._cached_entries = [SimpleNamespace(path="library/test.jpg")]
+
+        with patch.object(CLIENT, "_refresh_listing_cache") as REFRESH:
+            ENTRIES = CLIENT.list_entries_for_sync({})
+
+        self.assertEqual(ENTRIES, CLIENT._cached_entries)
+        REFRESH.assert_called_once()
+
+# --------------------------------------------------------------------------
+# This test confirms manifest-aware listing uses the early-stop cache refresh
+# path when the configured discovery mode is "until_found".
+# --------------------------------------------------------------------------
+    def test_list_entries_for_sync_uses_until_found_scan_when_mode_enabled(self) -> None:
+        CONFIG = AppConfig(**{
+            **create_config().__dict__,
+            "backup_discovery_mode": "until_found",
+        })
+        CLIENT = ICloudDriveClient(CONFIG)
+        CLIENT.api = SimpleNamespace()
+        CLIENT._cached_entries = [SimpleNamespace(path="library/test.jpg")]
+
+        with patch.object(CLIENT, "_refresh_listing_cache_until_found") as REFRESH:
+            ENTRIES = CLIENT.list_entries_for_sync({"library/test.jpg": {"size": 1}})
+
+        self.assertEqual(ENTRIES, CLIENT._cached_entries)
+        REFRESH.assert_called_once_with({"library/test.jpg": {"size": 1}})
+
+# --------------------------------------------------------------------------
 # This test confirms colliding day-and-filename assets receive deterministic
 # disambiguated output names instead of collapsing into one path.
 # --------------------------------------------------------------------------
@@ -377,10 +413,116 @@ class TestIcloudClient(unittest.TestCase):
         self.assertEqual(CLIENT._materialise_assets([1, 2]), [1, 2])
         self.assertEqual(CLIENT._materialise_assets((1, 2)), [1, 2])
         self.assertEqual(CLIENT._materialise_assets(object()), [])
+        self.assertEqual(list(CLIENT._materialise_asset_iterable(None)), [])
+        self.assertEqual(list(CLIENT._materialise_asset_iterable([1, 2])), [1, 2])
+        self.assertEqual(list(CLIENT._materialise_asset_iterable((1, 2))), [1, 2])
+        self.assertEqual(list(CLIENT._materialise_asset_iterable(object())), [])
         self.assertFalse(CLIENT._should_include_album(""))
         self.assertFalse(CLIENT._should_include_album("All Photos"))
         self.assertTrue(CLIENT._should_include_album("Trips"))
         self.assertTrue(CLIENT._should_include_album("Favourites"))
+
+# --------------------------------------------------------------------------
+# This test confirms early-stop discovery stops after the configured streak
+# of unchanged entries.
+# --------------------------------------------------------------------------
+    def test_read_all_assets_until_found_stops_after_match_threshold(self) -> None:
+        CONFIG = AppConfig(**{
+            **create_config().__dict__,
+            "backup_discovery_mode": "until_found",
+            "backup_until_found_count": 2,
+        })
+        CLIENT = ICloudDriveClient(CONFIG)
+        ASSETS = [object(), object(), object()]
+        CLIENT.api = SimpleNamespace(photos=SimpleNamespace(all=ASSETS))
+
+        with patch.object(
+            CLIENT,
+            "_build_remote_entry",
+            side_effect=[
+                SimpleNamespace(
+                    path="library/a.jpg",
+                    asset_id="a",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+                SimpleNamespace(
+                    path="library/b.jpg",
+                    asset_id="b",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+                SimpleNamespace(
+                    path="library/c.jpg",
+                    asset_id="c",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+            ],
+        ):
+            RESULT = CLIENT._read_all_assets_until_found(
+                {
+                    "library/a.jpg": {"asset_id": "a", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                    "library/b.jpg": {"asset_id": "b", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                },
+            )
+
+        self.assertEqual(RESULT, ASSETS[:2])
+
+# --------------------------------------------------------------------------
+# This test confirms early-stop discovery resets the unchanged streak when a
+# changed asset is encountered.
+# --------------------------------------------------------------------------
+    def test_read_all_assets_until_found_resets_streak_after_change(self) -> None:
+        CONFIG = AppConfig(**{
+            **create_config().__dict__,
+            "backup_discovery_mode": "until_found",
+            "backup_until_found_count": 2,
+        })
+        CLIENT = ICloudDriveClient(CONFIG)
+        ASSETS = [object(), object(), object(), object()]
+        CLIENT.api = SimpleNamespace(photos=SimpleNamespace(all=ASSETS))
+
+        with patch.object(
+            CLIENT,
+            "_build_remote_entry",
+            side_effect=[
+                SimpleNamespace(
+                    path="library/a.jpg",
+                    asset_id="a",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+                SimpleNamespace(
+                    path="library/b.jpg",
+                    asset_id="b",
+                    size=2,
+                    modified="2026-03-15T10:00:01+00:00",
+                ),
+                SimpleNamespace(
+                    path="library/c.jpg",
+                    asset_id="c",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+                SimpleNamespace(
+                    path="library/d.jpg",
+                    asset_id="d",
+                    size=1,
+                    modified="2026-03-15T10:00:00+00:00",
+                ),
+            ],
+        ):
+            RESULT = CLIENT._read_all_assets_until_found(
+                {
+                    "library/a.jpg": {"asset_id": "a", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                    "library/b.jpg": {"asset_id": "b", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                    "library/c.jpg": {"asset_id": "c", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                    "library/d.jpg": {"asset_id": "d", "size": 1, "modified": "2026-03-15T10:00:00+00:00"},
+                },
+            )
+
+        self.assertEqual(RESULT, ASSETS)
 
 # --------------------------------------------------------------------------
 # This test confirms album inclusion flags and membership mapping honour the

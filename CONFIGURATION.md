@@ -86,6 +86,9 @@ and then immediately starts again.
 
 - `<SVC>_SYNC_DOWNLOAD_WORKERS`: `auto` or an integer from `1` to `16`.
 - `<SVC>_SYNC_DOWNLOAD_CHUNK_MIB`: streamed download chunk size in MiB.
+- `<SVC>_BACKUP_DISCOVERY_MODE`: `full` or `until_found`.
+- `<SVC>_BACKUP_UNTIL_FOUND_COUNT`: positive consecutive-match streak used by
+  `until_found`.
 - `<SVC>_BACKUP_DELETE_REMOVED`: remove local files and empty directories when
   they no longer exist remotely.
 - `<SVC>_BACKUP_ALBUMS_ENABLED`: manage the derived `albums/` tree.
@@ -93,6 +96,19 @@ and then immediately starts again.
 - `<SVC>_BACKUP_INCLUDE_SHARED_ALBUMS`: include shared albums in `albums/`.
 - `<SVC>_BACKUP_INCLUDE_FAVOURITES`: include the favourites album in
   `albums/`.
+
+N.B.
+
+`full` is the default and safest discovery mode. `until_found` is an explicit
+performance mode based on `pyicloud` documenting that `All Photos` is ordered
+with the most recently added assets first.
+
+N.B.
+
+`until_found` stops scanning once it has seen the configured number of
+consecutive unchanged canonical entries. It can reduce remote listing work on
+incremental runs, but `full` remains the safer default when you want the most
+conservative behaviour.
 
 N.B.
 

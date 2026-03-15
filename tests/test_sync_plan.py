@@ -12,7 +12,13 @@ from tests._stubs import install_dependency_stubs
 
 install_dependency_stubs()
 
-from app.sync_plan import build_sync_plan, entry_metadata, get_valid_canonical_paths, needs_transfer
+from app.sync_plan import (
+    build_sync_plan,
+    entry_matches_manifest,
+    entry_metadata,
+    get_valid_canonical_paths,
+    needs_transfer,
+)
 
 
 # ------------------------------------------------------------------------------
@@ -103,6 +109,8 @@ class TestSyncPlan(unittest.TestCase):
             ),
         )
         self.assertFalse(needs_transfer(ENTRY, MATCHING_MANIFEST))
+        self.assertTrue(entry_matches_manifest(ENTRY, MATCHING_MANIFEST))
+        self.assertFalse(entry_matches_manifest(ENTRY, {}))
 
 # --------------------------------------------------------------------------
 # This test confirms build_sync_plan queues changed entries and preserves

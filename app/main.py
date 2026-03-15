@@ -44,6 +44,18 @@ def validate_config(CONFIG: AppConfig) -> list[str]:
 
     ERRORS.extend(validate_schedule_config(CONFIG))
 
+    if CONFIG.backup_discovery_mode not in {"full", "until_found"}:
+        ERRORS.append("BACKUP_DISCOVERY_MODE must be one of: full, until_found.")
+
+    if (
+        CONFIG.backup_discovery_mode == "until_found"
+        and CONFIG.backup_until_found_count < 1
+    ):
+        ERRORS.append(
+            "BACKUP_UNTIL_FOUND_COUNT must be at least 1 when "
+            "BACKUP_DISCOVERY_MODE is until_found."
+        )
+
     if CONFIG.sync_workers < 0 or CONFIG.sync_workers > 16:
         ERRORS.append("SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.")
 

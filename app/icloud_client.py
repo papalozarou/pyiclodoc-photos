@@ -16,6 +16,7 @@ import shutil
 from pyicloud import PyiCloudService
 
 from app.config import AppConfig
+from app.sync_plan import entry_matches_manifest
 
 FILE_NAME_SANITISE_PATTERN = re.compile(r"[^A-Za-z0-9._ -]+")
 
@@ -226,6 +227,32 @@ class ICloudDriveClient:
         return list(self._cached_entries)
 
 # --------------------------------------------------------------------------
+# This function lists remote photo assets using the configured discovery mode.
+#
+# 1. "MANIFEST" is previous sync metadata used for optional early-stop logic.
+#
+# Returns: Flat list of photo entries.
+# 
+# N.B.
+# "full" keeps the safer complete scan. "until_found" stops scanning
+# "All Photos" after enough consecutive unchanged canonical entries have been
+# observed, using the threshold from "BACKUP_UNTIL_FOUND_COUNT".
+# --------------------------------------------------------------------------
+    def list_entries_for_sync(
+        self,
+        MANIFEST: dict[str, dict[str, Any]],
+    ) -> list[RemoteEntry]:
+        if self.api is None:
+            return []
+
+        if self.config.backup_discovery_mode == "until_found":
+            self._refresh_listing_cache_until_found(MANIFEST)
+            return list(self._cached_entries)
+
+        self._refresh_listing_cache()
+        return list(self._cached_entries)
+
+# --------------------------------------------------------------------------
 # This function rebuilds the listing cache from the current remote state.
 #
 # Returns: None.
@@ -237,6 +264,36 @@ class ICloudDriveClient:
 # --------------------------------------------------------------------------
     def _refresh_listing_cache(self) -> None:
         ALL_ASSETS = self._read_all_assets()
+        ALBUM_MAP = self._read_album_membership()
+        BASE_ENTRIES = self._build_remote_entries(ALL_ASSETS, ALBUM_MAP)
+        RESOLVED_ENTRIES = self._resolve_entry_path_collisions(BASE_ENTRIES)
+        ASSETS_BY_PATH: dict[str, Any] = {}
+
+        for ITEM in RESOLVED_ENTRIES:
+            ASSETS_BY_PATH[ITEM.entry.path] = ITEM.asset
+
+        RESOLVED_ENTRIES.sort(key=lambda ITEM: ITEM.entry.path)
+        self._cached_entries = [ITEM.entry for ITEM in RESOLVED_ENTRIES]
+        self._cached_assets_by_path = ASSETS_BY_PATH
+
+# --------------------------------------------------------------------------
+# This function rebuilds the listing cache using the early-stop discovery
+# mode.
+#
+# 1. "MANIFEST" is previous sync metadata used to detect unchanged streaks.
+#
+# Returns: None.
+# 
+# N.B.
+# This relies on pyicloud documenting that "All Photos" is sorted by
+# "added_date" with the most recently added assets first. It is therefore an
+# optimisation mode, not the safest default.
+# --------------------------------------------------------------------------
+    def _refresh_listing_cache_until_found(
+        self,
+        MANIFEST: dict[str, dict[str, Any]],
+    ) -> None:
+        ALL_ASSETS = self._read_all_assets_until_found(MANIFEST)
         ALBUM_MAP = self._read_album_membership()
         BASE_ENTRIES = self._build_remote_entries(ALL_ASSETS, ALBUM_MAP)
         RESOLVED_ENTRIES = self._resolve_entry_path_collisions(BASE_ENTRIES)
@@ -591,6 +648,49 @@ class ICloudDriveClient:
         return []
 
 # --------------------------------------------------------------------------
+# This function returns assets from "All Photos" with optional early-stop
+# behaviour.
+#
+# 1. "MANIFEST" is previous sync metadata used to detect unchanged streaks.
+#
+# Returns: Ordered list of remote asset objects to normalise for this run.
+# --------------------------------------------------------------------------
+    def _read_all_assets_until_found(self, MANIFEST: dict[str, dict[str, Any]]) -> list[Any]:
+        PHOTOS = self._get_photos_service()
+
+        if PHOTOS is None:
+            return []
+
+        ALL_COLLECTION = None
+        THRESHOLD = self.config.backup_until_found_count
+
+        for CANDIDATE in self._candidate_all_assets(PHOTOS):
+            if CANDIDATE is not None:
+                ALL_COLLECTION = CANDIDATE
+                break
+
+        if ALL_COLLECTION is None or THRESHOLD < 1:
+            return self._read_all_assets()
+
+        RESULT: list[Any] = []
+        MATCHED_STREAK = 0
+        ALBUM_MAP: dict[str, tuple[str, ...]] = {}
+
+        for INDEX, ASSET in enumerate(self._materialise_asset_iterable(ALL_COLLECTION), start=1):
+            RESULT.append(ASSET)
+            ENTRY = self._build_remote_entry(ASSET, INDEX, ALBUM_MAP)
+
+            if entry_matches_manifest(ENTRY, MANIFEST):
+                MATCHED_STREAK += 1
+                if MATCHED_STREAK >= THRESHOLD:
+                    break
+                continue
+
+            MATCHED_STREAK = 0
+
+        return RESULT
+
+# --------------------------------------------------------------------------
 # This function returns derived album membership keyed by asset identifier.
 #
 # Returns: Mapping from asset identifier to sanitised album-path tuple.
@@ -728,6 +828,29 @@ class ICloudDriveClient:
             return list(SOURCE)
         except TypeError:
             return []
+
+# --------------------------------------------------------------------------
+# This function yields assets from a pyicloud collection without forcing a
+# full list conversion up front.
+#
+# 1. "SOURCE" is an asset collection object.
+#
+# Returns: Iterator of asset objects.
+# --------------------------------------------------------------------------
+    def _materialise_asset_iterable(self, SOURCE: Any):
+        if SOURCE is None:
+            return iter(())
+
+        if isinstance(SOURCE, list):
+            return iter(SOURCE)
+
+        if isinstance(SOURCE, tuple):
+            return iter(SOURCE)
+
+        try:
+            return iter(SOURCE)
+        except TypeError:
+            return iter(())
 
 # --------------------------------------------------------------------------
 # This function decides whether a named album should be backed up.

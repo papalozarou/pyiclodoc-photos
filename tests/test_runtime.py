@@ -583,6 +583,8 @@ class TestRuntime(unittest.TestCase):
             schedule_weekdays="monday",
             schedule_monthly_week="first",
             schedule_interval_minutes=1440,
+            backup_discovery_mode="full",
+            backup_until_found_count=50,
             backup_delete_removed=False,
             sync_workers=0,
             download_chunk_mib=4,

@@ -9,6 +9,7 @@ work. That means:
 
 - persistent auth, session, and keyring state;
 - manifest-driven incremental downloads;
+- optional `until_found` discovery mode for faster newest-first incremental runs;
 - one-shot and scheduled modes;
 - Telegram-driven auth and manual backup control;
 - first-run ownership safety checks before touching an existing backup tree;

@@ -43,3 +43,5 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(CONFIG.heartbeat_path.name, "pyiclodoc-photos-heartbeat.txt")
         self.assertTrue(CONFIG.backup_albums_enabled)
         self.assertEqual(CONFIG.backup_album_links_mode, "hardlink")
+        self.assertEqual(CONFIG.backup_discovery_mode, "full")
+        self.assertEqual(CONFIG.backup_until_found_count, 50)

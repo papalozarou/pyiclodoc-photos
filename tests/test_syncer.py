@@ -46,8 +46,10 @@ class FakeClient:
         self.entries = ENTRIES
         self.download_calls: list[str] = []
         self.failure_reason = ""
+        self.manifest_inputs: list[dict[str, dict[str, object]]] = []
 
-    def list_entries(self) -> list[RemoteEntry]:
+    def list_entries_for_sync(self, MANIFEST: dict[str, dict[str, object]]) -> list[RemoteEntry]:
+        self.manifest_inputs.append(MANIFEST)
         return self.entries
 
     def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
@@ -205,6 +207,7 @@ class TestSyncer(unittest.TestCase):
             SUMMARY, MANIFEST = perform_incremental_sync(CLIENT, Path(TMPDIR), {})
 
             self.assertEqual(SUMMARY.transferred_files, 1)
+            self.assertEqual(CLIENT.manifest_inputs, [{}])
             self.assertTrue((Path(TMPDIR) / ENTRY.path).exists())
             self.assertTrue((Path(TMPDIR) / "albums/Trips/IMG_0001.JPG").exists())
             self.assertIn(ENTRY.path, MANIFEST)
