@@ -148,6 +148,8 @@ N.B.
   checks pass.
 - `pyiclodoc-photos-safety_net_blocked.flag` is created when first-run safety
   checks block backup.
+- corrupt JSON state is quarantined beside the original file with a
+  `.corrupt` suffix so the worker can recover without deleting the bad state.
 - `icloudpd/cookies` and `icloudpd/session` are compatibility symlinks used so
   auth state can be reused safely with related tooling layouts.
 
@@ -169,14 +171,28 @@ Example:
 
 ```text
 /output/library/2026/03/14/IMG_0001.HEIC
+/output/library/2026/03/14/IMG_0001--0d4e6f8a1b2c.HEIC
 /output/albums/Trips/IMG_0001.HEIC
 ```
+
+N.B.
+
+When two different assets would otherwise collide on the same canonical dated
+path, the worker adds a deterministic suffix before the file extension. That
+keeps one canonical file per asset without abandoning the readable
+`year/month/day` layout.
 
 ## Log files
 
 - `/logs/pyiclodoc-photos-worker.log`: active worker log.
 - `/logs/pyiclodoc-photos-heartbeat.txt`: healthcheck heartbeat.
 - `/logs/pyiclodoc-photos-worker.*.log.gz`: rotated compressed log archives.
+
+N.B.
+
+Logger settings are cached inside the worker process and rotation checks are
+throttled per log file. That keeps debug-heavy runs lower in overhead terms
+without changing the visible logging contract.
 
 For scheduling compatibility and mode-specific behaviour, see
 [SCHEDULING.md](SCHEDULING.md).

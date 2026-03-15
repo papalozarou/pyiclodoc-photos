@@ -55,6 +55,15 @@ class DownloadResult:
 
 
 # ------------------------------------------------------------------------------
+# This data class keeps one resolved entry bound to its source asset object.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ResolvedAssetEntry:
+    entry: RemoteEntry
+    asset: Any
+
+
+# ------------------------------------------------------------------------------
 # This class encapsulates iCloud auth, photo listing, and asset downloads.
 # 
 # N.B.
@@ -223,7 +232,8 @@ class ICloudDriveClient:
 #
 # N.B.
 # The cache stores both the resolved entry list and the canonical-path-to-asset
-# mapping so downloads can reuse one remote listing pass.
+# mapping so downloads can reuse one remote listing pass without losing asset
+# identity when canonical paths are disambiguated.
 # --------------------------------------------------------------------------
     def _refresh_listing_cache(self) -> None:
         ALL_ASSETS = self._read_all_assets()
@@ -232,11 +242,11 @@ class ICloudDriveClient:
         RESOLVED_ENTRIES = self._resolve_entry_path_collisions(BASE_ENTRIES)
         ASSETS_BY_PATH: dict[str, Any] = {}
 
-        for ENTRY, ASSET in zip(RESOLVED_ENTRIES, ALL_ASSETS):
-            ASSETS_BY_PATH[ENTRY.path] = ASSET
+        for ITEM in RESOLVED_ENTRIES:
+            ASSETS_BY_PATH[ITEM.entry.path] = ITEM.asset
 
-        RESOLVED_ENTRIES.sort(key=lambda ENTRY: ENTRY.path)
-        self._cached_entries = RESOLVED_ENTRIES
+        RESOLVED_ENTRIES.sort(key=lambda ITEM: ITEM.entry.path)
+        self._cached_entries = [ITEM.entry for ITEM in RESOLVED_ENTRIES]
         self._cached_assets_by_path = ASSETS_BY_PATH
 
 # --------------------------------------------------------------------------
@@ -254,42 +264,48 @@ class ICloudDriveClient:
 # 1. "ALL_ASSETS" is the full photo asset list.
 # 2. "ALBUM_MAP" maps asset IDs to album output paths.
 #
-# Returns: List of normalised entries using the readable default layout.
+# Returns: Entry-and-asset bindings using the readable default layout.
 # --------------------------------------------------------------------------
     def _build_remote_entries(
         self,
         ALL_ASSETS: list[Any],
         ALBUM_MAP: dict[str, tuple[str, ...]],
-    ) -> list[RemoteEntry]:
-        RESULT: list[RemoteEntry] = []
+    ) -> list[ResolvedAssetEntry]:
+        RESULT: list[ResolvedAssetEntry] = []
 
         for INDEX, ASSET in enumerate(ALL_ASSETS, start=1):
-            RESULT.append(self._build_remote_entry(ASSET, INDEX, ALBUM_MAP))
+            RESULT.append(
+                ResolvedAssetEntry(
+                    entry=self._build_remote_entry(ASSET, INDEX, ALBUM_MAP),
+                    asset=ASSET,
+                )
+            )
 
         return RESULT
 
 # --------------------------------------------------------------------------
 # This function resolves canonical-path collisions across built entries.
 #
-# 1. "ENTRIES" is the base remote-entry list.
+# 1. "ENTRIES" is the base resolved entry-and-asset list.
 #
-# Returns: Entry list with deterministic disambiguation applied when needed.
+# Returns: Entry-and-asset list with deterministic disambiguation applied when
+# needed.
 #
 # N.B.
 # Distinct assets can legitimately share the same day and original filename.
 # When that happens, every colliding entry receives a stable suffix derived
-# from asset identity so canonical and album outputs remain unambiguous.
+# from asset identity and keeps its original asset binding.
 # --------------------------------------------------------------------------
     def _resolve_entry_path_collisions(
         self,
-        ENTRIES: list[RemoteEntry],
-    ) -> list[RemoteEntry]:
-        PATH_GROUPS: dict[str, list[RemoteEntry]] = {}
+        ENTRIES: list[ResolvedAssetEntry],
+    ) -> list[ResolvedAssetEntry]:
+        PATH_GROUPS: dict[str, list[ResolvedAssetEntry]] = {}
 
         for ENTRY in ENTRIES:
-            PATH_GROUPS.setdefault(ENTRY.path, []).append(ENTRY)
+            PATH_GROUPS.setdefault(ENTRY.entry.path, []).append(ENTRY)
 
-        RESULT: list[RemoteEntry] = []
+        RESULT: list[ResolvedAssetEntry] = []
 
         for ORIGINAL_PATH in sorted(PATH_GROUPS.keys()):
             GROUP = PATH_GROUPS[ORIGINAL_PATH]
@@ -305,30 +321,40 @@ class ICloudDriveClient:
 # --------------------------------------------------------------------------
 # This function rewrites one colliding entry group to unique stable paths.
 #
-# 1. "ENTRIES" is the colliding entry group.
+# 1. "ENTRIES" is the colliding resolved entry-and-asset group.
 #
-# Returns: Entry list with suffixes applied to file names in a stable order.
+# Returns: Entry-and-asset list with suffixes applied in a stable order.
 # --------------------------------------------------------------------------
-    def _disambiguate_entry_group(self, ENTRIES: list[RemoteEntry]) -> list[RemoteEntry]:
-        RESULT: list[RemoteEntry] = []
-        SORTED_ENTRIES = sorted(ENTRIES, key=lambda ENTRY: (ENTRY.asset_id, ENTRY.modified, ENTRY.path))
+    def _disambiguate_entry_group(self, ENTRIES: list[ResolvedAssetEntry]) -> list[ResolvedAssetEntry]:
+        RESULT: list[ResolvedAssetEntry] = []
+        SORTED_ENTRIES = sorted(
+            ENTRIES,
+            key=lambda ITEM: (
+                ITEM.entry.asset_id,
+                ITEM.entry.modified,
+                ITEM.entry.path,
+            ),
+        )
 
-        for ENTRY in SORTED_ENTRIES:
+        for ITEM in SORTED_ENTRIES:
             DISAMBIGUATED_NAME = self._add_collision_suffix(
-                ENTRY.download_name,
-                ENTRY.asset_id,
+                ITEM.entry.download_name,
+                ITEM.entry.asset_id,
             )
-            CANONICAL_PATH = self._replace_file_name(ENTRY.path, DISAMBIGUATED_NAME)
+            CANONICAL_PATH = self._replace_file_name(ITEM.entry.path, DISAMBIGUATED_NAME)
             RESULT.append(
-                RemoteEntry(
-                    path=CANONICAL_PATH,
-                    is_dir=ENTRY.is_dir,
-                    size=ENTRY.size,
-                    modified=ENTRY.modified,
-                    asset_id=ENTRY.asset_id,
-                    created=ENTRY.created,
-                    download_name=DISAMBIGUATED_NAME,
-                    album_paths=ENTRY.album_paths,
+                ResolvedAssetEntry(
+                    entry=RemoteEntry(
+                        path=CANONICAL_PATH,
+                        is_dir=ITEM.entry.is_dir,
+                        size=ITEM.entry.size,
+                        modified=ITEM.entry.modified,
+                        asset_id=ITEM.entry.asset_id,
+                        created=ITEM.entry.created,
+                        download_name=DISAMBIGUATED_NAME,
+                        album_paths=ITEM.entry.album_paths,
+                    ),
+                    asset=ITEM.asset,
                 )
             )
 
@@ -341,6 +367,12 @@ class ICloudDriveClient:
 # 2. "ASSET_ID" is the stable asset identifier.
 #
 # Returns: File name with collision suffix inserted before the extension.
+# 
+# N.B.
+# Suffix stability is strongest when pyicloud exposes a durable asset ID. When
+# the worker must fall back to a synthetic identifier, the suffix remains
+# deterministic for that observed listing but may change if upstream ordering
+# changes.
 # --------------------------------------------------------------------------
     def _add_collision_suffix(self, FILE_NAME: str, ASSET_ID: str) -> str:
         BASE_NAME, FILE_SUFFIX = os.path.splitext(FILE_NAME)

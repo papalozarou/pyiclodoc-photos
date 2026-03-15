@@ -15,6 +15,12 @@ work. That means:
 - support for more than one isolated worker in the same Compose project; and
 - a canonical photo library layout plus optional derived album views.
 
+N.B.
+
+When two different assets would otherwise land on the same
+`library/<year>/<month>/<day>/<filename>` path, the worker adds a stable
+suffix before the file extension so one asset cannot overwrite another.
+
 ## Example usage
 
 The example `compose.yml` and `.env` files run two isolated workers out of the
@@ -58,6 +64,7 @@ For example:
 ```text
 library/2026/03/14/IMG_1234.HEIC
 library/2026/03/14/IMG_1234.MOV
+library/2026/03/14/IMG_1234--0d4e6f8a1b2c.HEIC
 ```
 
 Optional album views are stored under:

@@ -13,7 +13,7 @@ from app.icloud_client import ICloudDriveClient
 from app.logger import log_line
 from app.scheduler import format_schedule_line, get_next_run_epoch
 from app.state import AuthState, load_manifest, save_manifest
-from app.syncer import get_transfer_worker_count, perform_incremental_sync, run_first_time_safety_net
+from app.syncer import perform_incremental_sync, run_first_time_safety_net
 from app.telegram_bot import TelegramConfig, send_message
 from app.telegram_control import handle_command, process_commands
 from app.telegram_messages import (
@@ -25,6 +25,7 @@ from app.telegram_messages import (
     build_safety_net_blocked_message,
     format_apple_id_label,
 )
+from app.transfer_runner import get_transfer_worker_count
 
 RUN_ONCE_AUTH_WAIT_SECONDS = 900
 RUN_ONCE_AUTH_POLL_SECONDS = 5

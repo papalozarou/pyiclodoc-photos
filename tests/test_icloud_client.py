@@ -275,3 +275,44 @@ class TestIcloudClient(unittest.TestCase):
             self.assertTrue(CLIENT.download_file(ENTRIES[1].path, SECOND_PATH))
 
         self.assertEqual(CLIENT.read_all_assets_calls, 1)
+
+# --------------------------------------------------------------------------
+# This test confirms colliding canonical paths still download the matching
+# source asset after path disambiguation.
+# --------------------------------------------------------------------------
+    def test_colliding_paths_keep_correct_asset_binding_for_download(self) -> None:
+        CLIENT = ICloudDriveClient(create_config())
+        FIRST_ASSET = SimpleNamespace(
+            id="asset-1",
+            filename="IMG_0001.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 9, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 9, 31, tzinfo=timezone.utc),
+            download=lambda: ChunkHandle([b"one1"]),
+        )
+        SECOND_ASSET = SimpleNamespace(
+            id="asset-2",
+            filename="IMG_0001.JPG",
+            size=4,
+            created=datetime(2026, 3, 14, 10, 30, tzinfo=timezone.utc),
+            modified=datetime(2026, 3, 14, 10, 31, tzinfo=timezone.utc),
+            download=lambda: ChunkHandle([b"two2"]),
+        )
+        CLIENT.api = SimpleNamespace(
+            photos=SimpleNamespace(
+                all=[SECOND_ASSET, FIRST_ASSET],
+                albums={"Trips": [FIRST_ASSET, SECOND_ASSET]},
+            )
+        )
+
+        ENTRIES = CLIENT.list_entries()
+        PATH_BY_ASSET_ID = {ENTRY.asset_id: ENTRY.path for ENTRY in ENTRIES}
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            FIRST_PATH = Path(TMPDIR) / "first.JPG"
+            SECOND_PATH = Path(TMPDIR) / "second.JPG"
+
+            self.assertTrue(CLIENT.download_file(PATH_BY_ASSET_ID["asset-1"], FIRST_PATH))
+            self.assertTrue(CLIENT.download_file(PATH_BY_ASSET_ID["asset-2"], SECOND_PATH))
+            self.assertEqual(FIRST_PATH.read_bytes(), b"one1")
+            self.assertEqual(SECOND_PATH.read_bytes(), b"two2")
