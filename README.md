@@ -1,28 +1,30 @@
 # PyiCloDoc Photos
 
-A dockerised `pyicloud` implementation for backing up iCloud Photos to local
-storage, with Telegram used for auth prompts, reauth prompts, manual control,
-and operational messages.
+A dockerised `pyicloud` implementation for backing up iCloud drives to local storage, with Telegram used for auth prompts and operational control. It is intended to be the photo companion to  [pyiclodoc-drive](https://github.com/papalozarou/pyiclodoc-drive).
 
-It aims to be practical for real use rather than just proving that downloads
-work. That means:
+It should have all the bits you need for real-world usage, such as:
 
-- persistent auth, session, and keyring state;
-- manifest-driven incremental downloads;
-- optional `until_found` discovery mode for faster newest-first incremental runs;
-- one-shot and scheduled modes;
-- Telegram-driven auth and manual backup control;
-- first-run ownership safety checks before touching an existing backup tree;
-- support for more than one isolated worker in the same Compose project; and
-- a canonical photo library layout plus optional derived album views.
+* persistent auth/session state;
+* manifest-driven incremental sync;
+* optional `until_found` for faster newest-first incremental runs;
+* one-shot and scheduled modes;
+* Telegram-driven auth and manual backup control;
+* protection of existing backups via a first-run safety net;
+* a canonical photo library layout plus optional derived album views; 
+* suffixes added to assets that match same `library/<year>/<month>/<day>/<filename>`; and
+* backup of more than one iCloud photo library using all of the above.
 
-N.B.
+It is intended to be set and forget – start it, authorise when needed, and let it do the rest.
 
-When two different assets would otherwise land on the same
-`library/<year>/<month>/<day>/<filename>` path, the worker adds a stable
-suffix before the file extension so one asset cannot overwrite another.
+*N.B.*
+
+You have probably already guessed from the `PROMPT.md` file that this was AI built.
+
+It started with the experiment in [pyiclodoc-drive](https://github.com/papalozarou/pyiclodoc-drive), and the logical next step was to build this project.
 
 ## Quick start
+
+The example `compose.yml` and `.env` files run two isolated containers out of the box, Alice and Bob, each with separate config, output, and logs. These examples give you a flavour of what PyiCloDoc Photos can do, and enough information to configure it to your needs. Complete documentation is linked at the end of this README.
 
 1. Copy `compose.yml.example` to `compose.yml`.
 2. Copy `.env.example` to `.env`.
