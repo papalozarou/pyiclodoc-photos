@@ -94,6 +94,8 @@ Backup completion messages include:
 - `Skipped: <count>`
 - `Errors: <count>`
 - `Duration: <hh:mm:ss>`
+- `Deleted: <files> files, <directories> directories` when
+  `BACKUP_DELETE_REMOVED=true`
 - `Average speed: <value> MiB/s` only when files were downloaded
 
 Backup start messages include:

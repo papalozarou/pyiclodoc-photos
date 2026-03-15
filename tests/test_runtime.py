@@ -2,6 +2,7 @@
 # This test module verifies runtime safety-net persistence behaviour.
 # ------------------------------------------------------------------------------
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -265,6 +266,39 @@ class TestRuntime(unittest.TestCase):
             COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
             self.assertIn("Transferred: 2/3", COMPLETION_MESSAGE)
             self.assertIn("Average speed:", COMPLETION_MESSAGE)
+
+# --------------------------------------------------------------------------
+# This test confirms backup completion includes delete totals when mirror
+# delete handling is enabled for the worker.
+# --------------------------------------------------------------------------
+    def test_run_backup_includes_delete_totals_when_delete_mode_is_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+            CONFIG = replace(self._create_config(TMPDIR_PATH), backup_delete_removed=True)
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            CLIENT = MagicMock()
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            SUMMARY = SyncResult(3, 2, 2097152, 1, 0, 0, 0, 4, 2, 0)
+            NEW_MANIFEST = {"library/2026/03/15/IMG_0001.JPG": {"size": 4}}
+
+            with patch("app.runtime.load_manifest", return_value={"old": {"size": 1}}):
+                with patch("app.runtime.perform_incremental_sync", return_value=(SUMMARY, NEW_MANIFEST)):
+                    with patch("app.runtime.save_manifest") as SAVE_MANIFEST:
+                        with patch("app.runtime.notify") as NOTIFY:
+                            with patch("app.runtime.time.time", side_effect=[100, 104]):
+                                run_backup(
+                                    CLIENT,
+                                    CONFIG,
+                                    TELEGRAM,
+                                    LOG_FILE,
+                                    "scheduled",
+                                    BUILD_DETAIL,
+                                )
+
+            SAVE_MANIFEST.assert_called_once_with(CONFIG.manifest_path, NEW_MANIFEST)
+            COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
+            self.assertIn("Deleted: 4 files, 2 directories", COMPLETION_MESSAGE)
 
 # --------------------------------------------------------------------------
 # This test confirms backup completion surfaces manifest persistence failure

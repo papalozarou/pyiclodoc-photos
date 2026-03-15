@@ -45,6 +45,9 @@ class SyncResult:
     error_files: int
     transfer_error_files: int = 0
     derived_error_files: int = 0
+    deleted_files: int = 0
+    deleted_directories: int = 0
+    delete_error_files: int = 0
 
 
 # ------------------------------------------------------------------------------
@@ -238,6 +241,9 @@ def perform_incremental_sync(
 
     ALBUM_RESULT = None
     DERIVED_ERRORS = 0
+    DELETED_FILES = 0
+    DELETED_DIRECTORIES = 0
+    DELETE_ERRORS = 0
 
     if BACKUP_ALBUMS_ENABLED:
         VALID_CANONICAL_PATHS = get_valid_canonical_paths(NEW_MANIFEST)
@@ -313,4 +319,7 @@ def perform_incremental_sync(
         error_files=TOTAL_ERRORS,
         transfer_error_files=TRANSFER_ERRORS,
         derived_error_files=DERIVED_ERRORS,
+        deleted_files=DELETED_FILES,
+        deleted_directories=DELETED_DIRECTORIES,
+        delete_error_files=DELETE_ERRORS,
     ), NEW_MANIFEST

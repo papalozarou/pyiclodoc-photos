@@ -319,6 +319,9 @@ def run_backup(
         f"errors={SUMMARY.error_files}, "
         f"transfer_errors={SUMMARY.transfer_error_files}, "
         f"derived_errors={SUMMARY.derived_error_files}, "
+        f"deleted_files={SUMMARY.deleted_files}, "
+        f"deleted_directories={SUMMARY.deleted_directories}, "
+        f"delete_errors={SUMMARY.delete_error_files}, "
         f"manifest_entries={len(NEW_MANIFEST)}",
     )
     MANIFEST_SAVED = save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
@@ -331,6 +334,13 @@ def run_backup(
         f"Errors: {SUMMARY.error_files}",
         f"Duration: {format_duration_clock(DURATION_SECONDS)}",
     ]
+
+    if CONFIG.backup_delete_removed:
+        STATUS_LINES.append(
+            "Deleted: "
+            f"{SUMMARY.deleted_files} files, "
+            f"{SUMMARY.deleted_directories} directories",
+        )
 
     if SUMMARY.transferred_files > 0:
         STATUS_LINES.append(f"Average speed: {AVERAGE_SPEED}")

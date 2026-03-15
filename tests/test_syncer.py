@@ -360,6 +360,39 @@ class TestSyncer(unittest.TestCase):
             self.assertIn("Transfer finished. transferred=1, skipped=0, errors=0.", LOG_TEXT)
 
 # --------------------------------------------------------------------------
+# This test confirms delete totals are exposed through the primary sync
+# summary model when mirror-delete handling is enabled.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_records_delete_totals_in_summary(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0001.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-1",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0001.JPG",
+        )
+        CLIENT = FakeClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            STALE_FILE = TMPDIR_PATH / "albums/Old/STALE.JPG"
+            STALE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STALE_FILE.write_bytes(b"stale")
+
+            SUMMARY, _ = perform_incremental_sync(
+                CLIENT,
+                TMPDIR_PATH,
+                {},
+                BACKUP_DELETE_REMOVED=True,
+            )
+
+            self.assertEqual(SUMMARY.deleted_files, 1)
+            self.assertEqual(SUMMARY.deleted_directories, 2)
+            self.assertEqual(SUMMARY.delete_error_files, 0)
+
+# --------------------------------------------------------------------------
 # This test confirms the sync emits failure summaries when transfers fail.
 # --------------------------------------------------------------------------
     def test_perform_incremental_sync_logs_transfer_failure_reasons(self) -> None:
