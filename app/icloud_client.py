@@ -245,7 +245,7 @@ class ICloudDriveClient:
         if self.api is None:
             return []
 
-        if self.config.backup_discovery_mode == "until_found":
+        if self._should_use_until_found_discovery():
             self._refresh_listing_cache_until_found(MANIFEST)
             return list(self._cached_entries)
 
@@ -275,6 +275,29 @@ class ICloudDriveClient:
         RESOLVED_ENTRIES.sort(key=lambda ITEM: ITEM.entry.path)
         self._cached_entries = [ITEM.entry for ITEM in RESOLVED_ENTRIES]
         self._cached_assets_by_path = ASSETS_BY_PATH
+
+# ------------------------------------------------------------------------------
+# This function decides whether the configured discovery mode can safely use
+# partial newest-first scanning for the current sync run.
+#
+# Returns: True when "until_found" can be used safely, otherwise False.
+#
+# N.B.
+# Delete reconciliation and album management both require an authoritative
+# full-library snapshot. This guard keeps the client from using a partial
+# discovery result as if it described the whole remote state.
+# ------------------------------------------------------------------------------
+    def _should_use_until_found_discovery(self) -> bool:
+        if self.config.backup_discovery_mode != "until_found":
+            return False
+
+        if self.config.backup_delete_removed:
+            return False
+
+        if self.config.backup_albums_enabled:
+            return False
+
+        return True
 
 # ------------------------------------------------------------------------------
 # This function rebuilds the listing cache using the early-stop discovery

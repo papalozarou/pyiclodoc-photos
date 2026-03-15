@@ -55,9 +55,22 @@ class TestMainEntrypoint(unittest.TestCase):
             "backup_discovery_mode": "until_found",
             "backup_until_found_count": 0,
         })
+        INVALID_DELETE_CONFIG = AppConfig(**{
+            **CONFIG.__dict__,
+            "backup_discovery_mode": "until_found",
+            "backup_delete_removed": True,
+            "backup_albums_enabled": False,
+        })
+        INVALID_ALBUMS_CONFIG = AppConfig(**{
+            **CONFIG.__dict__,
+            "backup_discovery_mode": "until_found",
+            "backup_albums_enabled": True,
+        })
 
         ERRORS = validate_config(INVALID_MODE_CONFIG)
         THRESHOLD_ERRORS = validate_config(INVALID_THRESHOLD_CONFIG)
+        DELETE_ERRORS = validate_config(INVALID_DELETE_CONFIG)
+        ALBUMS_ERRORS = validate_config(INVALID_ALBUMS_CONFIG)
 
         self.assertIn("ICLOUD_EMAIL is required.", ERRORS)
         self.assertIn("ICLOUD_PASSWORD is required.", ERRORS)
@@ -66,6 +79,16 @@ class TestMainEntrypoint(unittest.TestCase):
             "BACKUP_UNTIL_FOUND_COUNT must be at least 1 when "
             "BACKUP_DISCOVERY_MODE is until_found.",
             THRESHOLD_ERRORS,
+        )
+        self.assertIn(
+            "BACKUP_DISCOVERY_MODE=until_found cannot be used when "
+            "BACKUP_DELETE_REMOVED=true.",
+            DELETE_ERRORS,
+        )
+        self.assertIn(
+            "BACKUP_DISCOVERY_MODE=until_found cannot be used when "
+            "BACKUP_ALBUMS_ENABLED=true.",
+            ALBUMS_ERRORS,
         )
         self.assertIn(
             "SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.",

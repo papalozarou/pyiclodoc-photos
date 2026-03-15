@@ -60,6 +60,9 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
   `BACKUP_UNTIL_FOUND_COUNT` consecutive unchanged entries in `All Photos`.
 - `full` remains the safer default. `until_found` is an explicit performance
   optimisation that relies on `pyicloud`'s documented `All Photos` ordering.
+- `until_found` is only safe for canonical-library discovery. Delete
+  reconciliation and album management require a full remote snapshot, so the
+  worker does not support `until_found` with those features enabled.
 - Canonical files are written under `library/<year>/<month>/<day>/`.
 - When two assets would otherwise collide on the same canonical dated path,
   the worker adds a deterministic suffix before the file extension.

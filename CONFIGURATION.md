@@ -112,6 +112,12 @@ conservative behaviour.
 
 N.B.
 
+`until_found` cannot be combined with `<SVC>_BACKUP_DELETE_REMOVED=true` or
+`<SVC>_BACKUP_ALBUMS_ENABLED=true`. Both of those features require a full
+authoritative remote snapshot.
+
+N.B.
+
 `hardlink` is the opinionated default. It avoids duplicate data where the host
 filesystem and bind mount allow hard links. `copy` is strict copy-only mode and
 does not attempt hard links first.

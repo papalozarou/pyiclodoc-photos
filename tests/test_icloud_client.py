@@ -344,6 +344,7 @@ class TestIcloudClient(unittest.TestCase):
         CONFIG = AppConfig(**{
             **create_config().__dict__,
             "backup_discovery_mode": "until_found",
+            "backup_albums_enabled": False,
         })
         CLIENT = ICloudDriveClient(CONFIG)
         CLIENT.api = SimpleNamespace()
@@ -354,6 +355,28 @@ class TestIcloudClient(unittest.TestCase):
 
         self.assertEqual(ENTRIES, CLIENT._cached_entries)
         REFRESH.assert_called_once_with({"library/test.jpg": {"size": 1}})
+
+# ------------------------------------------------------------------------------
+# This test confirms manifest-aware listing falls back to a full scan when the
+# requested discovery mode would otherwise drive delete or album management
+# from a partial snapshot.
+# ------------------------------------------------------------------------------
+    def test_list_entries_for_sync_forces_full_scan_when_until_found_is_unsafe(self) -> None:
+        CONFIG = AppConfig(**{
+            **create_config().__dict__,
+            "backup_discovery_mode": "until_found",
+        })
+        CLIENT = ICloudDriveClient(CONFIG)
+        CLIENT.api = SimpleNamespace()
+        CLIENT._cached_entries = [SimpleNamespace(path="library/test.jpg")]
+
+        with patch.object(CLIENT, "_refresh_listing_cache") as FULL_REFRESH:
+            with patch.object(CLIENT, "_refresh_listing_cache_until_found") as PARTIAL_REFRESH:
+                ENTRIES = CLIENT.list_entries_for_sync({})
+
+        self.assertEqual(ENTRIES, CLIENT._cached_entries)
+        FULL_REFRESH.assert_called_once()
+        PARTIAL_REFRESH.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms colliding day-and-filename assets receive deterministic

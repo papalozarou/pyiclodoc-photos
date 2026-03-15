@@ -56,6 +56,18 @@ def validate_config(CONFIG: AppConfig) -> list[str]:
             "BACKUP_DISCOVERY_MODE is until_found."
         )
 
+    if CONFIG.backup_discovery_mode == "until_found" and CONFIG.backup_delete_removed:
+        ERRORS.append(
+            "BACKUP_DISCOVERY_MODE=until_found cannot be used when "
+            "BACKUP_DELETE_REMOVED=true."
+        )
+
+    if CONFIG.backup_discovery_mode == "until_found" and CONFIG.backup_albums_enabled:
+        ERRORS.append(
+            "BACKUP_DISCOVERY_MODE=until_found cannot be used when "
+            "BACKUP_ALBUMS_ENABLED=true."
+        )
+
     if CONFIG.sync_workers < 0 or CONFIG.sync_workers > 16:
         ERRORS.append("SYNC_DOWNLOAD_WORKERS must be auto or an integer between 1 and 16.")
 
