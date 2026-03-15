@@ -499,7 +499,9 @@ class TestSyncer(unittest.TestCase):
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertEqual(SUMMARY.transferred_files, 1)
-            self.assertEqual(SUMMARY.error_files, 0)
+            self.assertEqual(SUMMARY.error_files, 1)
+            self.assertEqual(SUMMARY.transfer_error_files, 0)
+            self.assertEqual(SUMMARY.derived_error_files, 1)
             self.assertTrue((TMPDIR_PATH / ENTRY.path).exists())
             self.assertFalse((TMPDIR_PATH / "albums/Trips/IMG_0006.JPG").exists())
             self.assertNotIn("albums/Trips/IMG_0006.JPG", MANIFEST)

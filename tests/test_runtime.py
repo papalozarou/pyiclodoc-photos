@@ -5,6 +5,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+import os
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -296,6 +297,40 @@ class TestRuntime(unittest.TestCase):
             COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
             self.assertIn("Manifest save failed. Next run may repeat work.", COMPLETION_MESSAGE)
             self.assertIn("Manifest save failed at", LOG_FILE.read_text(encoding="utf-8"))
+
+# --------------------------------------------------------------------------
+# This test confirms backup completion reports derived-output errors through
+# the primary run summary model instead of hiding them from the final status.
+# --------------------------------------------------------------------------
+    def test_run_backup_surfaces_derived_output_errors_in_completion_status(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+            CONFIG = self._create_config(TMPDIR_PATH)
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            CLIENT = MagicMock()
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            SUMMARY = SyncResult(2, 1, 1024, 1, 1, 0, 1)
+
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.runtime.load_manifest", return_value={}):
+                    with patch("app.runtime.perform_incremental_sync", return_value=(SUMMARY, {})):
+                        with patch("app.runtime.save_manifest", return_value=True):
+                            with patch("app.runtime.notify") as NOTIFY:
+                                with patch("app.runtime.time.time", side_effect=[100, 101]):
+                                    run_backup(
+                                        CLIENT,
+                                        CONFIG,
+                                        TELEGRAM,
+                                        LOG_FILE,
+                                        "scheduled",
+                                        BUILD_DETAIL,
+                                    )
+
+            COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertIn("Errors: 1", COMPLETION_MESSAGE)
+            self.assertIn("transfer_errors=0, derived_errors=1", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This test confirms backup completion omits average speed when no files were

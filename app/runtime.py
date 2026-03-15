@@ -317,6 +317,8 @@ def run_backup(
         f"bytes={SUMMARY.transferred_bytes}, "
         f"skipped={SUMMARY.skipped_files}, "
         f"errors={SUMMARY.error_files}, "
+        f"transfer_errors={SUMMARY.transfer_error_files}, "
+        f"derived_errors={SUMMARY.derived_error_files}, "
         f"manifest_entries={len(NEW_MANIFEST)}",
     )
     MANIFEST_SAVED = save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
