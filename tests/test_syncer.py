@@ -596,10 +596,11 @@ class TestSyncer(unittest.TestCase):
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertEqual(SUMMARY.error_files, 1)
             self.assertIn(
-                "File transfer worker failed: library/2026/03/14/IMG_0007.JPG "
-                "(RuntimeError: boom)",
+                "File transfer failed: library/2026/03/14/IMG_0007.JPG "
+                "(worker_exception:RuntimeError)",
                 LOG_TEXT,
             )
+            self.assertNotIn("File transfer worker failed:", LOG_TEXT)
             self.assertIn(
                 "Transfer failure reason detail: worker_exception:RuntimeError=1",
                 LOG_TEXT,

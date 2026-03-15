@@ -178,12 +178,6 @@ def run_transfers(
                         False,
                         failure_reason=f"worker_exception:{type(ERROR).__name__}",
                     )
-                    if LOG_FILE is not None:
-                        log_line(
-                            LOG_FILE,
-                            "error",
-                            f"File transfer worker failed: {ENTRY.path} ({type(ERROR).__name__}: {ERROR})",
-                        )
 
                 if RESULT.success:
                     LOCAL_PATH = OUTPUT_DIR / ENTRY.path
