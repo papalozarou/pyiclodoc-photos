@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import time
 
@@ -29,6 +30,15 @@ from app.transfer_runner import get_transfer_worker_count
 
 RUN_ONCE_AUTH_WAIT_SECONDS = 900
 RUN_ONCE_AUTH_POLL_SECONDS = 5
+
+
+# ------------------------------------------------------------------------------
+# This data class captures the outcome of one safety-net enforcement attempt.
+# ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SafetyNetEnforcementResult:
+    can_proceed: bool
+    should_retry: bool
 
 
 # ------------------------------------------------------------------------------
@@ -191,14 +201,18 @@ def write_safety_net_marker(
 # 2. "TELEGRAM" is Telegram integration configuration.
 # 3. "LOG_FILE" is worker log path.
 #
-# Returns: True when backup can proceed; otherwise False.
+# Returns: "SafetyNetEnforcementResult" describing proceed versus retry state.
 # ------------------------------------------------------------------------------
-def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Path) -> bool:
+def enforce_safety_net(
+    CONFIG: AppConfig,
+    TELEGRAM: TelegramConfig,
+    LOG_FILE: Path,
+) -> SafetyNetEnforcementResult:
     DONE_MARKER = CONFIG.config_dir / "pyiclodoc-photos-safety_net_done.flag"
     BLOCKED_MARKER = CONFIG.config_dir / "pyiclodoc-photos-safety_net_blocked.flag"
 
     if DONE_MARKER.exists():
-        return True
+        return SafetyNetEnforcementResult(True, False)
 
     RESULT = run_first_time_safety_net(CONFIG.output_dir, CONFIG.safety_net_sample_size)
 
@@ -207,7 +221,7 @@ def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Pa
         LOG_FILE,
         "blocked state",
     ):
-        return False
+        return SafetyNetEnforcementResult(False, False)
 
     if not RESULT.should_block:
         if not write_safety_net_marker(
@@ -216,13 +230,13 @@ def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Pa
             LOG_FILE,
             "done state",
         ):
-            return False
+            return SafetyNetEnforcementResult(False, False)
 
         log_line(LOG_FILE, "info", "First-run safety net passed.")
-        return True
+        return SafetyNetEnforcementResult(True, False)
 
     if BLOCKED_MARKER.exists():
-        return False
+        return SafetyNetEnforcementResult(False, True)
 
     MISMATCH_TEXT = "\n".join(RESULT.mismatched_samples)
     log_line(LOG_FILE, "error", "Safety net blocked backup due to permissions.")
@@ -238,13 +252,21 @@ def enforce_safety_net(CONFIG: AppConfig, TELEGRAM: TelegramConfig, LOG_FILE: Pa
             SAMPLE_TEXT,
         ),
     )
-    write_succeeded = write_safety_net_marker(
+    if not write_safety_net_marker(
         BLOCKED_MARKER,
         "blocked\n",
         LOG_FILE,
         "blocked state",
-    )
-    return False
+    ):
+        log_line(
+            LOG_FILE,
+            "error",
+            "Safety-net blocked state could not be persisted. "
+            "Stopping instead of retrying the blocked alert loop.",
+        )
+        return SafetyNetEnforcementResult(False, False)
+
+    return SafetyNetEnforcementResult(False, True)
 
 
 # ------------------------------------------------------------------------------
@@ -440,8 +462,12 @@ def run_one_shot_runtime(
         notify(TELEGRAM, build_backup_skipped_reauth_message(APPLE_ID_LABEL))
         return 3, "One-shot backup skipped due to pending reauthentication."
 
-    if not enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE):
-        return 4, "One-shot backup blocked by safety net."
+    SAFETY_NET_RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
+    if not SAFETY_NET_RESULT.can_proceed:
+        if SAFETY_NET_RESULT.should_retry:
+            return 4, "One-shot backup blocked by safety net."
+
+        return 5, "One-shot backup failed to persist safety-net state."
 
     run_backup(CLIENT, CONFIG, TELEGRAM, LOG_FILE, "one-shot", BUILD_DETAIL)
     return 0, "Run completed and container exited."
@@ -542,7 +568,11 @@ def run_persistent_runtime(
             time.sleep(5)
             continue
 
-        if not enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE):
+        SAFETY_NET_RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
+        if not SAFETY_NET_RESULT.can_proceed:
+            if not SAFETY_NET_RESULT.should_retry:
+                raise RuntimeError("Safety-net state persistence failed.")
+
             time.sleep(30)
             continue
 

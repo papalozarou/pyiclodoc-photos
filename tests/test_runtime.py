@@ -14,6 +14,7 @@ install_dependency_stubs()
 
 from app.config import AppConfig
 from app.runtime import (
+    SafetyNetEnforcementResult,
     clear_safety_net_marker,
     enforce_safety_net,
     format_average_speed,
@@ -88,7 +89,8 @@ class TestRuntime(unittest.TestCase):
                     RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
-            self.assertFalse(RESULT)
+            self.assertFalse(RESULT.can_proceed)
+            self.assertFalse(RESULT.should_retry)
             self.assertFalse((CONFIG.config_dir / "pyiclodoc-photos-safety_net_done.flag").exists())
             self.assertIn(
                 "Safety-net marker write failed for done state:",
@@ -119,7 +121,8 @@ class TestRuntime(unittest.TestCase):
                     RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
-            self.assertFalse(RESULT)
+            self.assertFalse(RESULT.can_proceed)
+            self.assertFalse(RESULT.should_retry)
             self.assertTrue(BLOCKED_MARKER.exists())
             self.assertIn(
                 "Safety-net marker clear failed for blocked state:",
@@ -138,7 +141,10 @@ class TestRuntime(unittest.TestCase):
             DONE_MARKER = CONFIG.config_dir / "pyiclodoc-photos-safety_net_done.flag"
             DONE_MARKER.write_text("ok\n", encoding="utf-8")
 
-            self.assertTrue(enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE))
+            RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
+
+            self.assertTrue(RESULT.can_proceed)
+            self.assertFalse(RESULT.should_retry)
 
 # --------------------------------------------------------------------------
 # This test confirms a blocked safety-net path records the blocked marker and
@@ -163,9 +169,46 @@ class TestRuntime(unittest.TestCase):
                 with patch("app.runtime.notify") as NOTIFY:
                     RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
 
-            self.assertFalse(RESULT)
+            self.assertFalse(RESULT.can_proceed)
+            self.assertTrue(RESULT.should_retry)
             self.assertTrue(
                 (CONFIG.config_dir / "pyiclodoc-photos-safety_net_blocked.flag").exists(),
+            )
+            NOTIFY.assert_called_once()
+
+# --------------------------------------------------------------------------
+# This test confirms a blocked-marker write failure stops the worker instead
+# of retrying a blocked alert loop without persisted state.
+# --------------------------------------------------------------------------
+    def test_enforce_safety_net_handles_blocked_marker_write_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+            CONFIG = self._create_config(TMPDIR_PATH)
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+
+            with patch(
+                "app.runtime.run_first_time_safety_net",
+                return_value=SafetyNetResult(
+                    True,
+                    1000,
+                    1000,
+                    ["a.jpg: uid=1, gid=1 (expected uid=1000, gid=1000)"],
+                ),
+            ):
+                with patch("app.runtime.notify") as NOTIFY:
+                    with patch(
+                        "app.runtime.write_safety_net_marker",
+                        return_value=False,
+                    ):
+                        RESULT = enforce_safety_net(CONFIG, TELEGRAM, LOG_FILE)
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertFalse(RESULT.can_proceed)
+            self.assertFalse(RESULT.should_retry)
+            self.assertIn(
+                "Stopping instead of retrying the blocked alert loop.",
+                LOG_TEXT,
             )
             NOTIFY.assert_called_once()
 
@@ -413,7 +456,10 @@ class TestRuntime(unittest.TestCase):
             BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
 
-            with patch("app.runtime.enforce_safety_net", return_value=False):
+            with patch(
+                "app.runtime.enforce_safety_net",
+                return_value=SafetyNetEnforcementResult(False, True),
+            ):
                 EXIT_CODE, STOP_STATUS = run_one_shot_runtime(
                     CONFIG,
                     CLIENT,
@@ -428,6 +474,36 @@ class TestRuntime(unittest.TestCase):
             self.assertIn("blocked by safety net", STOP_STATUS)
 
 # --------------------------------------------------------------------------
+# This test confirms one-shot runtime returns a distinct status when the
+# safety-net blocked state could not be persisted safely.
+# --------------------------------------------------------------------------
+    def test_run_one_shot_runtime_returns_safety_net_persist_failure_status(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CLIENT = MagicMock()
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+
+            with patch(
+                "app.runtime.enforce_safety_net",
+                return_value=SafetyNetEnforcementResult(False, False),
+            ):
+                EXIT_CODE, STOP_STATUS = run_one_shot_runtime(
+                    CONFIG,
+                    CLIENT,
+                    AUTH_STATE,
+                    True,
+                    TELEGRAM,
+                    LOG_FILE,
+                    BUILD_DETAIL,
+                )
+
+            self.assertEqual(EXIT_CODE, 5)
+            self.assertIn("failed to persist safety-net state", STOP_STATUS)
+
+# --------------------------------------------------------------------------
 # This test confirms one-shot runtime performs the backup and returns success
 # when auth and safety checks are already satisfied.
 # --------------------------------------------------------------------------
@@ -440,7 +516,10 @@ class TestRuntime(unittest.TestCase):
             BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
 
-            with patch("app.runtime.enforce_safety_net", return_value=True):
+            with patch(
+                "app.runtime.enforce_safety_net",
+                return_value=SafetyNetEnforcementResult(True, False),
+            ):
                 with patch("app.runtime.run_backup") as RUN_BACKUP:
                     EXIT_CODE, STOP_STATUS = run_one_shot_runtime(
                         CONFIG,
@@ -473,7 +552,10 @@ class TestRuntime(unittest.TestCase):
             with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
                 with patch("app.runtime.process_commands", return_value=([("auth", "123456")], 9)):
                     with patch("app.runtime.handle_command", return_value=OUTCOME):
-                        with patch("app.runtime.enforce_safety_net", return_value=True):
+                        with patch(
+                            "app.runtime.enforce_safety_net",
+                            return_value=SafetyNetEnforcementResult(True, False),
+                        ):
                             with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
                                 with patch("app.runtime.time.time", side_effect=[100, 100, 100]):
                                     with self.assertRaisesRegex(RuntimeError, "stop loop"):
@@ -567,7 +649,10 @@ class TestRuntime(unittest.TestCase):
 
             with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
                 with patch("app.runtime.process_commands", return_value=([], None)):
-                    with patch("app.runtime.enforce_safety_net", return_value=False):
+                    with patch(
+                        "app.runtime.enforce_safety_net",
+                        return_value=SafetyNetEnforcementResult(False, True),
+                    ):
                         with patch("app.runtime.time.sleep", side_effect=RuntimeError("stop loop")):
                             with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
                                 with self.assertRaisesRegex(RuntimeError, "stop loop"):
@@ -580,6 +665,40 @@ class TestRuntime(unittest.TestCase):
                                         LOG_FILE,
                                         BUILD_DETAIL,
                                     )
+
+# --------------------------------------------------------------------------
+# This test confirms a safety-net persistence failure stops the persistent
+# runtime instead of retrying without a stored blocked-state marker.
+# --------------------------------------------------------------------------
+    def test_run_persistent_runtime_raises_on_safety_net_persist_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CLIENT = MagicMock()
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+
+            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                with patch("app.runtime.process_commands", return_value=([], None)):
+                    with patch(
+                        "app.runtime.enforce_safety_net",
+                        return_value=SafetyNetEnforcementResult(False, False),
+                    ):
+                        with patch("app.runtime.time.time", side_effect=[100, 100]):
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "Safety-net state persistence failed.",
+                            ):
+                                run_persistent_runtime(
+                                    CONFIG,
+                                    CLIENT,
+                                    AUTH_STATE,
+                                    True,
+                                    TELEGRAM,
+                                    LOG_FILE,
+                                    BUILD_DETAIL,
+                                )
 
 # --------------------------------------------------------------------------
 # This helper builds a minimal configuration object for runtime tests.
