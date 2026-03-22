@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import time
 
@@ -26,6 +27,7 @@ from app.telegram_messages import (
     build_safety_net_blocked_message,
     format_apple_id_label,
 )
+from app.time_utils import configured_timezone
 from app.transfer_runner import get_transfer_worker_count
 
 RUN_ONCE_AUTH_WAIT_SECONDS = 900
@@ -100,6 +102,18 @@ def format_delete_summary(DELETED_FILES: int, DELETED_DIRECTORIES: int) -> str:
         f"{DELETED_FILES} {FILE_LABEL}, "
         f"{DELETED_DIRECTORIES} {DIRECTORY_LABEL}"
     )
+
+
+# ------------------------------------------------------------------------------
+# This function formats one next-run timestamp using the configured timezone.
+#
+# 1. "TARGET_EPOCH" is next scheduled run time in epoch seconds.
+#
+# Returns: Human-readable local timestamp with timezone abbreviation.
+# ------------------------------------------------------------------------------
+def format_next_run_time(TARGET_EPOCH: int) -> str:
+    TARGET_TIME = datetime.fromtimestamp(TARGET_EPOCH, configured_timezone())
+    return TARGET_TIME.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 # ------------------------------------------------------------------------------
@@ -536,6 +550,12 @@ def run_persistent_runtime(
     else:
         NEXT_RUN_EPOCH = get_next_run_epoch(CONFIG, INITIAL_EPOCH)
 
+    log_line(
+        LOG_FILE,
+        "info",
+        f"Next scheduled run: {format_next_run_time(NEXT_RUN_EPOCH)}.",
+    )
+
     while True:
         AUTH_STATE = process_reauth_reminders(
             AUTH_STATE,
@@ -582,6 +602,12 @@ def run_persistent_runtime(
             continue
 
         NEXT_RUN_EPOCH = get_next_run_epoch(CONFIG, NOW_EPOCH)
+        log_line(
+            LOG_FILE,
+            "info",
+            "Next scheduled run recalculated: "
+            f"{format_next_run_time(NEXT_RUN_EPOCH)}.",
+        )
 
         if not IS_AUTHENTICATED:
             notify(

@@ -22,6 +22,8 @@
   days.
 - Worker startup acquires a shared lock file under `/config` so only one worker
   process can use the same runtime state at a time.
+- If `TZ` is invalid, worker startup logs that UTC fallback is in effect for
+  schedule calculations and timestamps.
 - Logger settings are cached inside the worker process and rotation checks are
   throttled per log file, so verbose runs do not re-parse the logging
   environment and re-stat the same log on every emitted line.
@@ -37,6 +39,12 @@
 
 For full scheduling behaviour, option compatibility, manual command effects,
 and validation rules, see [SCHEDULING.md](SCHEDULING.md).
+
+- Persistent mode logs the initial next scheduled run time after startup.
+- When a scheduled or manual run becomes due, persistent mode logs the
+  recalculated next scheduled run time before the next wait cycle.
+- These schedule lines are emitted in the configured local timezone, or UTC if
+  `TZ` is invalid.
 
 ## One-shot mode
 
@@ -73,6 +81,8 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
 - Album views are created afterwards under `albums/<album>/`.
 - Album views prefer hard links and fall back to file copies where linking is
   not possible.
+- When hard-link mode falls back to copying, worker logs record the affected
+  album view path and canonical source path.
 - Download workers run in parallel automatically based on host CPU.
 - Worker count is internally bounded and can be overridden with
   `SYNC_DOWNLOAD_WORKERS`.

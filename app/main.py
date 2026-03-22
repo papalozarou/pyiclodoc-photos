@@ -26,6 +26,7 @@ from app.telegram_messages import (
     build_container_stopped_message,
     format_apple_id_label,
 )
+from app.time_utils import get_timezone_fallback_warning
 
 
 # ------------------------------------------------------------------------------
@@ -118,6 +119,9 @@ def main() -> int:
         CONFIG = load_config()
         LOG_FILE = CONFIG.logs_dir / "pyiclodoc-photos-worker.log"
         TELEGRAM = TelegramConfig(CONFIG.telegram_bot_token, CONFIG.telegram_chat_id)
+        TIMEZONE_WARNING = get_timezone_fallback_warning()
+        if TIMEZONE_WARNING:
+            log_line(LOG_FILE, "error", TIMEZONE_WARNING)
         try:
             LOCK_HANDLE = acquire_runtime_lock(
                 CONFIG.config_dir,

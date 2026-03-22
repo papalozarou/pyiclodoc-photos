@@ -229,6 +229,42 @@ class TestMainEntrypoint(unittest.TestCase):
         LOG_LINE.assert_called()
 
 # --------------------------------------------------------------------------
+# This test confirms startup logs a timezone fallback warning when "TZ" is
+# invalid and UTC fallback is used.
+# --------------------------------------------------------------------------
+    def test_main_logs_timezone_fallback_warning_for_invalid_tz(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CLIENT = MagicMock()
+            HEARTBEAT_STOP_EVENT = MagicMock()
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+
+            with patch("app.main.load_config", return_value=CONFIG):
+                with patch("app.main.acquire_runtime_lock", return_value=MagicMock()):
+                    with patch("app.main.get_timezone_fallback_warning", return_value='TZ="Mars/Olympus" is invalid. Falling back to UTC for schedule calculations and timestamps.'):
+                        with patch("app.main.configure_keyring"):
+                            with patch("app.main.load_credentials", return_value=("", "")):
+                                with patch("app.main.start_heartbeat_updater", return_value=HEARTBEAT_STOP_EVENT):
+                                    with patch("app.main.save_credentials"):
+                                        with patch("app.main.ICloudDriveClient", return_value=CLIENT):
+                                            with patch("app.main.load_auth_state", return_value=AUTH_STATE):
+                                                    with patch(
+                                                        "app.main.attempt_auth",
+                                                        return_value=(AUTH_STATE, True, "auth ok"),
+                                                    ):
+                                                        with patch("app.main.run_persistent_runtime"):
+                                                            with patch("app.main.log_line") as LOG_LINE:
+                                                                with patch("app.main.release_runtime_lock"):
+                                                                    main()
+
+        self.assertTrue(
+            any(
+                'TZ="Mars/Olympus" is invalid.' in CALL.args[2]
+                for CALL in LOG_LINE.call_args_list
+            )
+        )
+
+# --------------------------------------------------------------------------
 # This helper builds a minimal valid configuration object for main-entrypoint
 # tests.
 # --------------------------------------------------------------------------

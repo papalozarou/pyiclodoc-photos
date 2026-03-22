@@ -86,7 +86,10 @@ class TestAlbumReconcile(unittest.TestCase):
             SOURCE_PATH.write_bytes(b"data")
             os.link(SOURCE_PATH, TARGET_PATH)
 
-            self.assertFalse(create_album_link(SOURCE_PATH, TARGET_PATH, "hardlink"))
+            self.assertEqual(
+                create_album_link(SOURCE_PATH, TARGET_PATH, "hardlink"),
+                (False, False),
+            )
 
 # --------------------------------------------------------------------------
 # This test confirms create_album_link overwrites a stale target in copy mode.
@@ -101,7 +104,10 @@ class TestAlbumReconcile(unittest.TestCase):
             SOURCE_PATH.write_bytes(b"fresh")
             TARGET_PATH.write_bytes(b"stale")
 
-            self.assertTrue(create_album_link(SOURCE_PATH, TARGET_PATH, "copy"))
+            self.assertEqual(
+                create_album_link(SOURCE_PATH, TARGET_PATH, "copy"),
+                (True, False),
+            )
             self.assertEqual(TARGET_PATH.read_bytes(), b"fresh")
             self.assertFalse(os.path.samefile(SOURCE_PATH, TARGET_PATH))
 
@@ -118,7 +124,10 @@ class TestAlbumReconcile(unittest.TestCase):
             SOURCE_PATH.write_bytes(b"data")
 
             with patch("app.album_reconcile.os.link", side_effect=OSError("cross-device")):
-                self.assertTrue(create_album_link(SOURCE_PATH, TARGET_PATH, "hardlink"))
+                self.assertEqual(
+                    create_album_link(SOURCE_PATH, TARGET_PATH, "hardlink"),
+                    (True, True),
+                )
 
             self.assertTrue(TARGET_PATH.exists())
             self.assertEqual(TARGET_PATH.read_bytes(), b"data")
@@ -211,7 +220,7 @@ class TestAlbumReconcile(unittest.TestCase):
 
             with patch(
                 "app.album_reconcile.create_album_link",
-                side_effect=[True, False],
+                side_effect=[(True, False), (False, False)],
             ):
                 RESULT = reconcile_album_views(
                     TMPDIR_PATH,
@@ -268,3 +277,40 @@ class TestAlbumReconcile(unittest.TestCase):
             self.assertEqual(RESULT.errors, 1)
             self.assertEqual(NEW_MANIFEST, {})
             self.assertIn("Album view refresh failed", LOG_TEXT)
+
+# --------------------------------------------------------------------------
+# This test confirms reconciliation logs when hardlink mode falls back to copy.
+# --------------------------------------------------------------------------
+    def test_reconcile_album_views_logs_hardlink_copy_fallback(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/15/photo.jpg",
+            is_dir=False,
+            size=4,
+            modified="2026-03-15T10:00:00+00:00",
+            download_name="photo.jpg",
+            album_paths=("albums/Trips",),
+        )
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+            SOURCE_PATH = TMPDIR_PATH / ENTRY.path
+            SOURCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SOURCE_PATH.write_bytes(b"data")
+
+            with patch(
+                "app.album_reconcile.create_album_link",
+                return_value=(True, True),
+            ):
+                RESULT = reconcile_album_views(
+                    TMPDIR_PATH,
+                    [ENTRY],
+                    {},
+                    {ENTRY.path},
+                    "hardlink",
+                    LOG_FILE,
+                )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertEqual(RESULT.created, 1)
+            self.assertIn("Album view hardlink fallback used copy mode", LOG_TEXT)

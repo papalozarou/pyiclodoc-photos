@@ -33,6 +33,25 @@ def configured_timezone() -> tzinfo:
 
 
 # ------------------------------------------------------------------------------
+# This function reports whether "TZ" falls back to UTC because it is invalid.
+#
+# Returns: Warning text when fallback is in effect, otherwise an empty string.
+# ------------------------------------------------------------------------------
+def get_timezone_fallback_warning() -> str:
+    TZ_NAME = os.getenv("TZ", "UTC").strip() or "UTC"
+
+    try:
+        ZoneInfo(TZ_NAME)
+    except ZoneInfoNotFoundError:
+        return (
+            f'TZ="{TZ_NAME}" is invalid. Falling back to UTC for schedule '
+            "calculations and timestamps."
+        )
+
+    return ""
+
+
+# ------------------------------------------------------------------------------
 # This function returns the current time in the configured timezone.
 #
 # Returns: Offset-aware "datetime" in the configured timezone.

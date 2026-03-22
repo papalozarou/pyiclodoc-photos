@@ -695,6 +695,44 @@ class TestRuntime(unittest.TestCase):
             self.assertIn("Auth command result: auth ok", LOG_TEXT)
 
 # --------------------------------------------------------------------------
+# This test confirms the persistent runtime logs the initial and recalculated
+# next scheduled run times for schedule debugging.
+# --------------------------------------------------------------------------
+    def test_run_persistent_runtime_logs_next_run_times(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CONFIG = replace(CONFIG, schedule_mode="interval", schedule_interval_minutes=15)
+            CLIENT = MagicMock()
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+
+            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                with patch("app.runtime.process_commands", return_value=([], None)):
+                    with patch(
+                        "app.runtime.enforce_safety_net",
+                        return_value=SafetyNetEnforcementResult(True, False),
+                    ):
+                        with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
+                            with patch("app.runtime.get_next_run_epoch", return_value=300):
+                                with patch("app.runtime.time.time", side_effect=[100, 100]):
+                                    with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                        run_persistent_runtime(
+                                            CONFIG,
+                                            CLIENT,
+                                            AUTH_STATE,
+                                            True,
+                                            TELEGRAM,
+                                            LOG_FILE,
+                                            BUILD_DETAIL,
+                                        )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertIn("Next scheduled run:", LOG_TEXT)
+            self.assertIn("Next scheduled run recalculated:", LOG_TEXT)
+
+# --------------------------------------------------------------------------
 # This test confirms the persistent runtime skips scheduled work when auth is
 # incomplete.
 # --------------------------------------------------------------------------

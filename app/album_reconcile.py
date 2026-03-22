@@ -92,7 +92,7 @@ def reconcile_album_views(
         for ALBUM_DIR in ENTRY.album_paths:
             TARGET_PATH = OUTPUT_DIR / ALBUM_DIR / ENTRY.download_name
             try:
-                WAS_CREATED = create_album_link(
+                WAS_CREATED, USED_COPY_FALLBACK = create_album_link(
                     SOURCE_PATH,
                     TARGET_PATH,
                     BACKUP_ALBUM_LINKS_MODE,
@@ -123,6 +123,14 @@ def reconcile_album_views(
 
             if LOG_FILE is None:
                 continue
+
+            if USED_COPY_FALLBACK:
+                log_line(
+                    LOG_FILE,
+                    "info",
+                    "Album view hardlink fallback used copy mode: "
+                    f"{TARGET_PATH.relative_to(OUTPUT_DIR)} -> {ENTRY.path}",
+                )
 
             log_line(
                 LOG_FILE,
@@ -157,25 +165,25 @@ def create_album_link(
     SOURCE_PATH: Path,
     TARGET_PATH: Path,
     BACKUP_ALBUM_LINKS_MODE: str,
-) -> bool:
+) -> tuple[bool, bool]:
     TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if TARGET_PATH.exists():
         if same_file_contents(TARGET_PATH, SOURCE_PATH):
-            return False
+            return False, False
 
         TARGET_PATH.unlink()
 
     if BACKUP_ALBUM_LINKS_MODE == "copy":
         shutil.copy2(SOURCE_PATH, TARGET_PATH)
-        return True
+        return True, False
 
     try:
         os.link(SOURCE_PATH, TARGET_PATH)
-        return True
+        return True, False
     except OSError:
         shutil.copy2(SOURCE_PATH, TARGET_PATH)
-        return True
+        return True, True
 
 
 # ------------------------------------------------------------------------------
