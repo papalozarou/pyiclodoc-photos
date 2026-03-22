@@ -107,7 +107,10 @@ def attempt_auth(
         NOTIFY_MESSAGE(build_auth_required_message(USERNAME, APPLE_ID_LABEL))
         return NEW_STATE, False, DETAILS
 
-    NEW_STATE = replace(AUTH_STATE, auth_pending=True)
+    NEW_STATE = replace(
+        AUTH_STATE,
+        auth_pending=AUTH_STATE.auth_pending if CODE else False,
+    )
     if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
         DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
     NOTIFY_MESSAGE(build_auth_failed_message(APPLE_ID_LABEL, DETAILS))

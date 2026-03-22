@@ -125,8 +125,8 @@ class TestAuthFlow(unittest.TestCase):
         self.assertIn("Authentication required", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
-# This test confirms a generic auth failure marks auth pending and emits the
-# failure message.
+# This test confirms a generic auth failure does not enter MFA-pending state
+# and emits the failure message.
 # --------------------------------------------------------------------------
     def test_attempt_auth_emits_failure_message_for_non_two_factor_error(self) -> None:
         STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
@@ -149,6 +149,35 @@ class TestAuthFlow(unittest.TestCase):
 
         self.assertFalse(IS_AUTHENTICATED)
         self.assertEqual(DETAILS, "Bad password.")
+        self.assertFalse(NEW_STATE.auth_pending)
+        self.assertEqual(SAVED_STATE, NEW_STATE)
+        self.assertIn("Authentication failed", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms a failed MFA-code submission keeps the existing pending
+# code-entry state so the operator can retry with a new code.
+# --------------------------------------------------------------------------
+    def test_attempt_auth_keeps_pending_state_for_failed_code_submission(self) -> None:
+        STATE = AuthState("1970-01-01T00:00:00+00:00", True, False, "none")
+        CLIENT = FakeClient((False, "unused"), (False, "Bad verification code."))
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+            NEW_STATE, IS_AUTHENTICATED, DETAILS = attempt_auth(
+                CLIENT,
+                STATE,
+                STATE_PATH,
+                SENT_MESSAGES.append,
+                "alice",
+                "alice@example.com",
+                "123456",
+            )
+
+            SAVED_STATE = load_auth_state(STATE_PATH)
+
+        self.assertFalse(IS_AUTHENTICATED)
+        self.assertEqual(DETAILS, "Bad verification code.")
         self.assertTrue(NEW_STATE.auth_pending)
         self.assertEqual(SAVED_STATE, NEW_STATE)
         self.assertIn("Authentication failed", SENT_MESSAGES[0])
