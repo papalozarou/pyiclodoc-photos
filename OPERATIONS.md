@@ -129,6 +129,9 @@ and album subtrees.
   `.corrupt` suffix and carries on with empty in-memory state.
 - This is intended to turn truncated or manually damaged state files into a
   recoverable operator problem rather than a startup crash.
+- Each backup run logs manifest growth detail as `previous_entries`,
+  `refreshed_entries`, and `delta` so long-term manifest size can be monitored
+  from normal worker logs.
 
 ## Reimport note
 

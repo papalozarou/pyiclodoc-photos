@@ -270,21 +270,27 @@ class TestRuntime(unittest.TestCase):
                 with patch("app.runtime.perform_incremental_sync", return_value=(SUMMARY, NEW_MANIFEST)):
                     with patch("app.runtime.save_manifest") as SAVE_MANIFEST:
                         with patch("app.runtime.notify") as NOTIFY:
-                            with patch("app.runtime.time.time", side_effect=[100, 104]):
-                                run_backup(
-                                    CLIENT,
-                                    CONFIG,
-                                    TELEGRAM,
-                                    LOG_FILE,
-                                    "scheduled",
-                                    BUILD_DETAIL,
-                                )
+                            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                                with patch("app.runtime.time.time", side_effect=[100, 104]):
+                                    run_backup(
+                                        CLIENT,
+                                        CONFIG,
+                                        TELEGRAM,
+                                        LOG_FILE,
+                                        "scheduled",
+                                        BUILD_DETAIL,
+                                    )
 
             SAVE_MANIFEST.assert_called_once_with(CONFIG.manifest_path, NEW_MANIFEST)
             self.assertEqual(NOTIFY.call_count, 2)
             COMPLETION_MESSAGE = NOTIFY.call_args_list[-1].args[1]
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertIn("Transferred: 2/3", COMPLETION_MESSAGE)
             self.assertIn("Average speed:", COMPLETION_MESSAGE)
+            self.assertIn(
+                "Manifest growth detail: previous_entries=1, refreshed_entries=1, delta=0",
+                LOG_TEXT,
+            )
 
 # --------------------------------------------------------------------------
 # This test confirms backup completion includes delete totals when mirror

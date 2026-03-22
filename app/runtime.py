@@ -356,6 +356,14 @@ def run_backup(
         f"delete_errors={SUMMARY.delete_error_files}, "
         f"manifest_entries={len(NEW_MANIFEST)}",
     )
+    log_line(
+        LOG_FILE,
+        "debug",
+        "Manifest growth detail: "
+        f"previous_entries={len(MANIFEST)}, "
+        f"refreshed_entries={len(NEW_MANIFEST)}, "
+        f"delta={len(NEW_MANIFEST) - len(MANIFEST)}",
+    )
     MANIFEST_SAVED = save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
 
     DURATION_SECONDS = int(time.time()) - RUN_START_EPOCH
