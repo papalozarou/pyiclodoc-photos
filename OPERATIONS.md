@@ -20,6 +20,8 @@
 - Worker logs rotate daily and at size threshold, are compressed to
   `pyiclodoc-photos-worker.*.log.gz`, and are pruned by configured retention
   days.
+- Worker startup acquires a shared lock file under `/config` so only one worker
+  process can use the same runtime state at a time.
 - Logger settings are cached inside the worker process and rotation checks are
   throttled per log file, so verbose runs do not re-parse the logging
   environment and re-stat the same log on every emitted line.
@@ -75,10 +77,26 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
 - Worker count is internally bounded and can be overridden with
   `SYNC_DOWNLOAD_WORKERS`.
 - Download stream chunk size can be tuned with `SYNC_DOWNLOAD_CHUNK_MIB`.
+- Transient download failures are retried a small number of times during the
+  same run before the worker records a final transfer failure.
 - Successful downloads preserve remote modified timestamps on local files.
 - Optional mirror-delete behaviour can be enabled with
   `BACKUP_DELETE_REMOVED=true`, which prunes local files and empty directories
   under `/output` when they no longer exist in iCloud.
+
+## Config validation
+
+- Invalid numeric values such as `SYNC_DOWNLOAD_CHUNK_MIB=abc` or
+  `SCHEDULE_INTERVAL_MINUTES=abc` are treated as startup validation errors.
+- The worker does not silently fall back to defaults when those values are set
+  explicitly but cannot be parsed.
+
+## Single-writer operation
+
+- One worker process must have exclusive write access to a given `/config` and
+  `/output` state set.
+- If a second worker starts with the same shared config directory, startup is
+  blocked by the runtime lock and the worker exits non-zero.
 
 ## Safety-net behaviour
 

@@ -86,6 +86,10 @@ When `<SVC>_RUN_ONCE=true`, set `<SVC>_RESTART_POLICY=no`. If you leave a
 restart policy such as `unless-stopped` in place, the one-shot container exits
 and then immediately starts again.
 
+If a numeric schedule value is set to an invalid value such as `abc`, the
+worker treats that as a startup configuration error. It does not silently
+accept the value and continue with the default.
+
 ### Transfer and backup behaviour
 
 | Variable name | Possible values | `.env.example` |
@@ -122,6 +126,10 @@ library-discovery optimisation rather than a general reduced-work mode.
 filesystem and bind mount allow hard links. `copy` is strict copy-only mode and
 does not attempt hard links first.
 
+If a numeric transfer value is set to an invalid value such as `abc`, the
+worker treats that as a startup configuration error. It does not silently
+accept the value and continue with the default.
+
 When `<SVC>_BACKUP_ALBUMS_ENABLED=false`, the worker stops creating, refreshing,
 and deleting files under `albums/`. Existing album output is left untouched.
 
@@ -150,6 +158,7 @@ Runtime layout:
 ```text
 /config
 ├── pyiclodoc-photos-auth_state.json
+├── pyiclodoc-photos.lock
 ├── pyiclodoc-photos-manifest.json
 ├── pyiclodoc-photos-safety_net_done.flag
 ├── pyiclodoc-photos-safety_net_blocked.flag
@@ -166,6 +175,8 @@ Runtime layout:
 
 - `pyiclodoc-photos-safety_net_done.flag` is created when first-run safety
   checks pass.
+- `pyiclodoc-photos.lock` is held by the active worker process to prevent more
+  than one writer using the same config and output state at the same time.
 - `pyiclodoc-photos-safety_net_blocked.flag` is created when first-run safety
   checks block backup.
 - corrupt JSON state is quarantined beside the original file with a

@@ -29,6 +29,12 @@ Supported command forms:
    `reauth` without a code first to trigger a new challenge prompt.
 6. If successful, pending auth state is cleared and normal backup flow resumes.
 
+*N.B.*
+
+Generic authentication failures such as a bad password do not enter MFA-pending
+state. The worker reports the failure and does not wait for a code that cannot
+resolve it.
+
 ## Reminder and reauth timing
 
 - When reauthentication is due within five days, the worker sends a reminder.
@@ -51,24 +57,24 @@ follows Apple account policy.
 
 Messages use this compact structure:
 
-- bold emoji header in sentence case;
+- plain-text emoji header in sentence case;
 - one-line action summary including Apple ID; and
 - optional compact status lines.
 
 Current message templates include:
 
-- `*🟢 PCD Photos - Container started*`
-- `*🛑 PCD Photos - Container stopped*`
-- `*🔑 PCD Photos - Authentication required*`
-- `*🔑 PCD Photos - Reauthentication required*`
-- `*🔒 PCD Photos - Authentication complete*`
-- `*❌ PCD Photos - Authentication failed*`
-- `*📥 PCD Photos - Backup requested*`
-- `*⬇️ PCD Photos - Backup started*`
-- `*📦 PCD Photos - Backup complete*`
-- `*⏭️ PCD Photos - Backup skipped*`
-- `*⚠️ PCD Photos - Safety net blocked*`
-- `*📣 PCD Photos - Reauth reminder*`
+- `🟢 PCD Photos - Container started`
+- `🛑 PCD Photos - Container stopped`
+- `🔑 PCD Photos - Authentication required`
+- `🔑 PCD Photos - Reauthentication required`
+- `🔒 PCD Photos - Authentication complete`
+- `❌ PCD Photos - Authentication failed`
+- `📥 PCD Photos - Backup requested`
+- `⬇️ PCD Photos - Backup started`
+- `📦 PCD Photos - Backup complete`
+- `⏭️ PCD Photos - Backup skipped`
+- `⚠️ PCD Photos - Safety net blocked`
+- `📣 PCD Photos - Reauth reminder`
 
 Authentication-required messages can include:
 
