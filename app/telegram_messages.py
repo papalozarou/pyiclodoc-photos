@@ -43,7 +43,7 @@ def format_telegram_event(
     DESCRIPTION: str,
     STATUS_LINES: list[str] | None = None,
 ) -> str:
-    LINES = [f"*{ICON} PCD Photos - {TITLE}*", DESCRIPTION]
+    LINES = [f"{ICON} PCD Photos - {TITLE}", DESCRIPTION]
 
     if STATUS_LINES:
         LINES.extend([LINE for LINE in STATUS_LINES if LINE.strip()])

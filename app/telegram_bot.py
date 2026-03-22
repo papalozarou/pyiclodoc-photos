@@ -67,7 +67,6 @@ def send_message(CONFIG: TelegramConfig, TEXT: str, TIMEOUT: int = 20) -> bool:
     PAYLOAD = {
         "chat_id": CONFIG.chat_id,
         "text": TEXT,
-        "parse_mode": "Markdown",
     }
 
     try:
@@ -122,7 +121,10 @@ def fetch_updates(
     if not RESPONSE.ok:
         return []
 
-    PAYLOAD = RESPONSE.json()
+    try:
+        PAYLOAD = RESPONSE.json()
+    except ValueError:
+        return []
 
     if not PAYLOAD.get("ok"):
         return []

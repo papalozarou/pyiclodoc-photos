@@ -34,7 +34,7 @@ class TestTelegramBot(unittest.TestCase):
         self.assertFalse(send_message(TelegramConfig(bot_token="token", chat_id=""), "hello"))
 
 # --------------------------------------------------------------------------
-# This test confirms send_message posts Markdown payload and returns the HTTP
+# This test confirms send_message posts plain-text payload and returns the HTTP
 # success state.
 # --------------------------------------------------------------------------
     def test_send_message_posts_expected_payload(self) -> None:
@@ -51,10 +51,25 @@ class TestTelegramBot(unittest.TestCase):
             {
                 "chat_id": "1",
                 "text": "hello",
-                "parse_mode": "Markdown",
             },
         )
         self.assertEqual(POST.call_args.kwargs["timeout"], 10)
+
+# --------------------------------------------------------------------------
+# This test confirms send_message leaves Markdown-like characters untouched
+# when the transport uses plain text.
+# --------------------------------------------------------------------------
+    def test_send_message_posts_plain_text_for_markdown_like_content(self) -> None:
+        CONFIG = TelegramConfig(bot_token="token", chat_id="1")
+        RESPONSE = MagicMock(ok=True)
+        TEXT = "*alice_[example]*"
+
+        with patch("app.telegram_bot.requests.post", return_value=RESPONSE) as POST:
+            RESULT = send_message(CONFIG, TEXT, TIMEOUT=10)
+
+        self.assertTrue(RESULT)
+        self.assertEqual(POST.call_args.kwargs["json"]["text"], TEXT)
+        self.assertNotIn("parse_mode", POST.call_args.kwargs["json"])
 
 # --------------------------------------------------------------------------
 # This test confirms send_message collapses request exceptions to false.
@@ -93,12 +108,14 @@ class TestTelegramBot(unittest.TestCase):
         self.assertEqual(GET.call_args.kwargs["timeout"], 35)
 
 # --------------------------------------------------------------------------
-# This test confirms fetch_updates returns empty lists for request and API
-# failure cases.
+# This test confirms fetch_updates returns empty lists for request, parse, and
+# API failure cases.
 # --------------------------------------------------------------------------
     def test_fetch_updates_returns_empty_list_for_failure_cases(self) -> None:
         CONFIG = TelegramConfig(bot_token="token", chat_id="1")
         BAD_HTTP = MagicMock(ok=False)
+        BAD_JSON = MagicMock(ok=True)
+        BAD_JSON.json.side_effect = ValueError("bad json")
         BAD_API = MagicMock(ok=True)
         BAD_API.json.return_value = {"ok": False}
         BAD_RESULT = MagicMock(ok=True)
@@ -112,6 +129,9 @@ class TestTelegramBot(unittest.TestCase):
                 self.assertEqual(fetch_updates(CONFIG, None), [])
 
         with patch("app.telegram_bot.requests.get", return_value=BAD_HTTP):
+            self.assertEqual(fetch_updates(CONFIG, None), [])
+
+        with patch("app.telegram_bot.requests.get", return_value=BAD_JSON):
             self.assertEqual(fetch_updates(CONFIG, None), [])
 
         with patch("app.telegram_bot.requests.get", return_value=BAD_API):
