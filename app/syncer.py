@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import Any
 import os
@@ -75,6 +76,23 @@ def run_first_time_safety_net(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> SafetyNetRe
 
 
 # ------------------------------------------------------------------------------
+# This function returns one deterministic sample key for a local file path.
+#
+# 1. "OUTPUT_DIR" is the backup destination root.
+# 2. "FILE_PATH" is one local file path under inspection.
+#
+# Returns: Stable hex sort key used to keep a distributed bounded sample.
+# ------------------------------------------------------------------------------
+def get_sample_key(OUTPUT_DIR: Path, FILE_PATH: Path) -> str:
+    try:
+        RELATIVE_PATH = FILE_PATH.relative_to(OUTPUT_DIR).as_posix()
+    except ValueError:
+        RELATIVE_PATH = str(FILE_PATH)
+
+    return hashlib.sha1(RELATIVE_PATH.encode("utf-8")).hexdigest()
+
+
+# ------------------------------------------------------------------------------
 # This function collects a bounded local-file sample for permission checks.
 #
 # 1. "OUTPUT_DIR" is the backup destination root.
@@ -83,22 +101,35 @@ def run_first_time_safety_net(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> SafetyNetRe
 # Returns: Ordered file list up to "SAMPLE_SIZE" for ownership analysis.
 # 
 # N.B.
-# The sample uses filesystem walk order. It does not try to be statistically
-# representative; it only needs to surface obvious ownership mismatches.
+# The sample is bounded, deterministic, and spread across the whole tree using
+# stable path hashing. This avoids large-library bias towards whichever files
+# the filesystem walk yields first.
 # ------------------------------------------------------------------------------
 def collect_local_files(OUTPUT_DIR: Path, SAMPLE_SIZE: int) -> list[Path]:
-    RESULT: list[Path] = []
+    if SAMPLE_SIZE < 1:
+        return []
+
+    SELECTED: list[tuple[str, Path]] = []
 
     for PATH in OUTPUT_DIR.rglob("*"):
         if not PATH.is_file():
             continue
 
-        RESULT.append(PATH)
+        SAMPLE_KEY = get_sample_key(OUTPUT_DIR, PATH)
 
-        if len(RESULT) >= SAMPLE_SIZE:
-            return RESULT
+        if len(SELECTED) < SAMPLE_SIZE:
+            SELECTED.append((SAMPLE_KEY, PATH))
+            SELECTED.sort(key=lambda ITEM: ITEM[0], reverse=True)
+            continue
 
-    return RESULT
+        if SAMPLE_KEY >= SELECTED[0][0]:
+            continue
+
+        SELECTED[0] = (SAMPLE_KEY, PATH)
+        SELECTED.sort(key=lambda ITEM: ITEM[0], reverse=True)
+
+    SELECTED.sort(key=lambda ITEM: ITEM[0])
+    return [PATH for _, PATH in SELECTED]
 
 
 # ------------------------------------------------------------------------------

@@ -117,6 +117,11 @@ If mismatches are found, backup is blocked. Details are written to worker logs
 and sent via Telegram. This is intended to avoid destructive rewrites over
 existing backup trees with mixed ownership.
 
+The sample stays bounded, but it is selected deterministically across the full
+tree rather than just taking the first files returned by the filesystem walk.
+That makes the first-run check less biased on large libraries with many year
+and album subtrees.
+
 ## State recovery
 
 - If `pyiclodoc-photos-auth_state.json` or `pyiclodoc-photos-manifest.json`

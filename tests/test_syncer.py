@@ -18,6 +18,7 @@ from app.icloud_client import DownloadResult
 from app.syncer import (
     collect_local_files,
     collect_mismatches,
+    get_sample_key,
     perform_incremental_sync,
     run_first_time_safety_net,
 )
@@ -161,7 +162,7 @@ class BrokenStatPath:
 class TestSyncer(unittest.TestCase):
 # --------------------------------------------------------------------------
 # This test confirms the bounded local-file collector ignores directories and
-# stops once the requested sample size has been reached.
+# respects the requested sample size.
 # --------------------------------------------------------------------------
     def test_collect_local_files_respects_sample_limit(self) -> None:
         with tempfile.TemporaryDirectory() as TMPDIR:
@@ -173,6 +174,38 @@ class TestSyncer(unittest.TestCase):
             RESULT = collect_local_files(TMPDIR_PATH, 2)
             self.assertEqual(len(RESULT), 2)
             self.assertTrue(all(PATH.is_file() for PATH in RESULT))
+
+# --------------------------------------------------------------------------
+# This test confirms the bounded local-file collector uses deterministic
+# distributed selection instead of trusting filesystem walk order alone.
+# --------------------------------------------------------------------------
+    def test_collect_local_files_uses_deterministic_distributed_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            FILE_PATHS = [
+                TMPDIR_PATH / "library" / "2024" / "01" / "01" / "a.jpg",
+                TMPDIR_PATH / "library" / "2025" / "06" / "07" / "b.jpg",
+                TMPDIR_PATH / "albums" / "Trips" / "c.jpg",
+                TMPDIR_PATH / "albums" / "Favourites" / "d.jpg",
+            ]
+
+            for FILE_PATH in FILE_PATHS:
+                FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                FILE_PATH.write_text("x", encoding="utf-8")
+
+            RESULT = collect_local_files(TMPDIR_PATH, 2)
+            EXPECTED = [
+                FILE_PATH
+                for _, FILE_PATH in sorted(
+                    (
+                        (get_sample_key(TMPDIR_PATH, FILE_PATH), FILE_PATH)
+                        for FILE_PATH in FILE_PATHS
+                    ),
+                    key=lambda ITEM: ITEM[0],
+                )[:2]
+            ]
+
+            self.assertEqual(RESULT, EXPECTED)
 
 
 # --------------------------------------------------------------------------
