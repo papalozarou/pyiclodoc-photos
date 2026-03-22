@@ -24,6 +24,7 @@ class AuthState:
     reauth_pending: bool
     reminder_stage: str
     last_reminder_utc: str = ""
+    manual_reauth_pending: bool = False
 
 
 # ------------------------------------------------------------------------------
@@ -156,6 +157,7 @@ def load_auth_state(PATH: Path) -> AuthState:
         reauth_pending=bool(PAYLOAD.get("reauth_pending", False)),
         reminder_stage=str(PAYLOAD.get("reminder_stage", "none")),
         last_reminder_utc=str(PAYLOAD.get("last_reminder_utc", "")),
+        manual_reauth_pending=bool(PAYLOAD.get("manual_reauth_pending", False)),
     )
 
 
@@ -174,6 +176,7 @@ def save_auth_state(PATH: Path, STATE: AuthState) -> bool:
         "reauth_pending": STATE.reauth_pending,
         "reminder_stage": STATE.reminder_stage,
         "last_reminder_utc": STATE.last_reminder_utc,
+        "manual_reauth_pending": STATE.manual_reauth_pending,
     }
     return write_json(PATH, PAYLOAD)
 

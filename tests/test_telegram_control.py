@@ -173,8 +173,9 @@ class TestTelegramControl(unittest.TestCase):
                 )
 
         self.assertTrue(OUTCOME.auth_state.reauth_pending)
-        self.assertEqual(OUTCOME.auth_state.reminder_stage, "prompt2")
+        self.assertEqual(OUTCOME.auth_state.reminder_stage, "none")
         self.assertEqual(OUTCOME.auth_state.last_reminder_utc, "2026-03-15T12:00:00+00:00")
+        self.assertTrue(OUTCOME.auth_state.manual_reauth_pending)
         self.assertFalse(OUTCOME.backup_requested)
         self.assertIn("Reauthentication required", SENT_MESSAGES[0])
 

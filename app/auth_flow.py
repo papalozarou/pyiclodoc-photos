@@ -58,6 +58,31 @@ def get_reauth_days_left(LAST_AUTH_UTC: str, INTERVAL_DAYS: int) -> int:
 
 
 # ------------------------------------------------------------------------------
+# This function persists one reminder-state transition before it becomes live.
+#
+# 1. "AUTH_STATE_PATH" is auth state file path.
+# 2. "CURRENT_STATE" is the current in-memory state.
+# 3. "NEXT_STATE" is the proposed next state.
+#
+# Returns: Persisted next state, or the unchanged current state on failure.
+#
+# N.B.
+# Reminder transitions must not change only in memory. If persistence fails,
+# the worker keeps the previous state so restarts and notifications stay
+# consistent.
+# ------------------------------------------------------------------------------
+def persist_reauth_transition(
+    AUTH_STATE_PATH: Path,
+    CURRENT_STATE: AuthState,
+    NEXT_STATE: AuthState,
+) -> AuthState:
+    if not save_auth_state(AUTH_STATE_PATH, NEXT_STATE):
+        return CURRENT_STATE
+
+    return NEXT_STATE
+
+
+# ------------------------------------------------------------------------------
 # This function executes authentication and persists updated auth state.
 #
 # 1. "CLIENT" is iCloud client wrapper.
@@ -95,6 +120,7 @@ def attempt_auth(
             reauth_pending=False,
             reminder_stage="none",
             last_reminder_utc="",
+            manual_reauth_pending=False,
         )
         if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
@@ -139,41 +165,65 @@ def process_reauth_reminders(
     DAYS_LEFT = get_reauth_days_left(AUTH_STATE.last_auth_utc, INTERVAL_DAYS)
 
     if DAYS_LEFT > 5:
+        if AUTH_STATE.manual_reauth_pending:
+            return AUTH_STATE
+
         if AUTH_STATE.reminder_stage == "none" and not AUTH_STATE.reauth_pending:
             return AUTH_STATE
 
-        NEW_STATE = replace(
+        NEXT_STATE = replace(
             AUTH_STATE,
             reminder_stage="none",
             reauth_pending=False,
             last_reminder_utc="",
         )
-        save_auth_state(AUTH_STATE_PATH, NEW_STATE)
-        return NEW_STATE
+        return persist_reauth_transition(
+            AUTH_STATE_PATH,
+            AUTH_STATE,
+            NEXT_STATE,
+        )
 
     if (
         DAYS_LEFT <= 2
         and AUTH_STATE.reminder_stage != "prompt2"
         and not AUTH_STATE.reauth_pending
     ):
-        NOTIFY_MESSAGE(build_reauth_due_message(USERNAME))
-        NEW_STATE = replace(
+        NEXT_STATE = replace(
             AUTH_STATE,
             reminder_stage="prompt2",
             reauth_pending=True,
             last_reminder_utc=now_iso(),
+            manual_reauth_pending=False,
         )
-        save_auth_state(AUTH_STATE_PATH, NEW_STATE)
+        NEW_STATE = persist_reauth_transition(
+            AUTH_STATE_PATH,
+            AUTH_STATE,
+            NEXT_STATE,
+        )
+
+        if NEW_STATE == AUTH_STATE:
+            return AUTH_STATE
+
+        NOTIFY_MESSAGE(build_reauth_due_message(USERNAME))
         return NEW_STATE
 
     if DAYS_LEFT <= 5 and AUTH_STATE.reminder_stage == "none" and not AUTH_STATE.reauth_pending:
-        NOTIFY_MESSAGE(build_reauth_reminder_message())
-        NEW_STATE = replace(
+        NEXT_STATE = replace(
             AUTH_STATE,
             reminder_stage="alert5",
             last_reminder_utc=now_iso(),
+            manual_reauth_pending=False,
         )
-        save_auth_state(AUTH_STATE_PATH, NEW_STATE)
+        NEW_STATE = persist_reauth_transition(
+            AUTH_STATE_PATH,
+            AUTH_STATE,
+            NEXT_STATE,
+        )
+
+        if NEW_STATE == AUTH_STATE:
+            return AUTH_STATE
+
+        NOTIFY_MESSAGE(build_reauth_reminder_message())
         return NEW_STATE
 
     return AUTH_STATE

@@ -107,8 +107,9 @@ def handle_command(
         NEW_STATE = replace(
             AUTH_STATE,
             reauth_pending=True,
-            reminder_stage="prompt2",
+            reminder_stage=AUTH_STATE.reminder_stage,
             last_reminder_utc=now_iso(),
+            manual_reauth_pending=True,
         )
         DETAILS = ""
         if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):

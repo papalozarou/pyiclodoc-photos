@@ -40,9 +40,9 @@ resolve it.
 - When reauthentication is due within five days, the worker sends a reminder.
 - When reauthentication is due within two days, the worker switches to a
   reauth-required prompt.
-- Manual `reauth` without a code persists the same reauth-required stage used
-  by automatic reminders, so a restart does not immediately resend the same
-  prompt.
+- Manual `reauth` without a code sets an explicit manual reauth-pending state.
+- That manual reauth state stays pending until auth completes, rather than
+  being cleared by the normal schedule-driven reminder window.
 - If reauth is still pending, automatic backup does not proceed until auth is
   completed.
 
@@ -118,6 +118,8 @@ Backup requested messages include:
 
 - `Manual backup requested for Apple ID <apple-id>.`
 - `Worker queued backup to run now.`
+- A manual backup request is consumed after one attempted run path, even if
+  that attempt is skipped because auth is incomplete or reauth is pending.
 
 Backup skipped messages include:
 

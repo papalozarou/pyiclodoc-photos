@@ -260,6 +260,7 @@ class TestAuthFlow(unittest.TestCase):
         self.assertTrue(NEW_STATE.reauth_pending)
         self.assertEqual(NEW_STATE.reminder_stage, "prompt2")
         self.assertEqual(NEW_STATE.last_reminder_utc, "2026-03-15T12:00:00+00:00")
+        self.assertFalse(NEW_STATE.manual_reauth_pending)
         self.assertTrue(SAVED_STATE.reauth_pending)
         self.assertIn("Reauthentication required", SENT_MESSAGES[0])
 
@@ -317,6 +318,36 @@ class TestAuthFlow(unittest.TestCase):
         self.assertFalse(NEW_STATE.reauth_pending)
         self.assertEqual(NEW_STATE.reminder_stage, "none")
         self.assertEqual(SAVED_STATE, NEW_STATE)
+
+# --------------------------------------------------------------------------
+# This test confirms manual reauth state is preserved when the schedule-driven
+# reminder window is not active yet.
+# --------------------------------------------------------------------------
+    def test_process_reauth_reminders_preserves_manual_reauth_when_not_due(self) -> None:
+        STATE = AuthState(
+            "2026-03-10T00:00:00+00:00",
+            False,
+            True,
+            "none",
+            "2026-03-15T12:00:00+00:00",
+            True,
+        )
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.get_reauth_days_left", return_value=6):
+                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                    NEW_STATE = process_reauth_reminders(
+                        STATE,
+                        STATE_PATH,
+                        lambda MESSAGE: None,
+                        "alice",
+                        30,
+                    )
+
+        self.assertEqual(NEW_STATE, STATE)
+        SAVE_AUTH_STATE.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms the clear-state branch does not rewrite auth state when
@@ -396,3 +427,28 @@ class TestAuthFlow(unittest.TestCase):
         self.assertEqual(NEW_STATE, STATE)
         self.assertEqual(SENT_MESSAGES, [])
         SAVE_AUTH_STATE.assert_not_called()
+
+# --------------------------------------------------------------------------
+# This test confirms reminder notifications are not sent when the new state
+# could not be persisted safely.
+# --------------------------------------------------------------------------
+    def test_process_reauth_reminders_skips_notification_when_persistence_fails(self) -> None:
+        STATE = AuthState("2026-03-10T00:00:00+00:00", False, False, "none")
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.get_reauth_days_left", return_value=5):
+                with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                    with patch("app.auth_flow.save_auth_state", return_value=False):
+                        NEW_STATE = process_reauth_reminders(
+                            STATE,
+                            STATE_PATH,
+                            SENT_MESSAGES.append,
+                            "alice",
+                            30,
+                        )
+
+        self.assertEqual(NEW_STATE, STATE)
+        self.assertEqual(SENT_MESSAGES, [])

@@ -801,6 +801,50 @@ class TestRuntime(unittest.TestCase):
             NOTIFY.assert_called_once()
 
 # --------------------------------------------------------------------------
+# This test confirms a manual backup request is consumed after one skipped
+# auth-incomplete attempt instead of re-triggering repeated skip messages.
+# --------------------------------------------------------------------------
+    def test_run_persistent_runtime_consumes_manual_backup_request_after_auth_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = replace(
+                self._create_config(Path(TMPDIR)),
+                schedule_mode="daily",
+                schedule_backup_time="02:00",
+            )
+            CLIENT = MagicMock()
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+            BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+            OUTCOME = CommandOutcome(AUTH_STATE, False, True, "")
+
+            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                with patch(
+                    "app.runtime.process_commands",
+                    side_effect=[([("backup", "")], None), ([], None)],
+                ):
+                    with patch("app.runtime.handle_command", return_value=OUTCOME):
+                        with patch("app.runtime.notify") as NOTIFY:
+                            with patch("app.runtime.get_next_run_epoch", side_effect=[200, 200]):
+                                with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
+                                    with patch(
+                                        "app.runtime.time.sleep",
+                                        side_effect=[None, RuntimeError("stop loop")],
+                                    ):
+                                        with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                            run_persistent_runtime(
+                                                CONFIG,
+                                                CLIENT,
+                                                AUTH_STATE,
+                                                False,
+                                                TELEGRAM,
+                                                LOG_FILE,
+                                                BUILD_DETAIL,
+                                            )
+
+        self.assertEqual(NOTIFY.call_count, 1)
+
+# --------------------------------------------------------------------------
 # This test confirms the persistent runtime pauses and retries when the safety
 # net blocks the run.
 # --------------------------------------------------------------------------

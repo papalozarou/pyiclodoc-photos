@@ -609,6 +609,10 @@ def run_persistent_runtime(
             time.sleep(5)
             continue
 
+        MANUAL_BACKUP_REQUESTED = BACKUP_REQUESTED
+        if MANUAL_BACKUP_REQUESTED:
+            BACKUP_REQUESTED = False
+
         NEXT_RUN_EPOCH = get_next_run_epoch(CONFIG, NOW_EPOCH)
         log_line(
             LOG_FILE,
@@ -641,7 +645,6 @@ def run_persistent_runtime(
             time.sleep(30)
             continue
 
-        BACKUP_TRIGGER = "manual" if BACKUP_REQUESTED else "scheduled"
+        BACKUP_TRIGGER = "manual" if MANUAL_BACKUP_REQUESTED else "scheduled"
         run_backup(CLIENT, CONFIG, TELEGRAM, LOG_FILE, BACKUP_TRIGGER, BUILD_DETAIL)
-        BACKUP_REQUESTED = False
         time.sleep(5)

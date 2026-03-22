@@ -45,6 +45,9 @@ and validation rules, see [SCHEDULING.md](SCHEDULING.md).
   recalculated next scheduled run time before the next wait cycle.
 - These schedule lines are emitted in the configured local timezone, or UTC if
   `TZ` is invalid.
+- A Telegram manual backup request queues one backup attempt. If that attempt
+  is skipped because auth is incomplete or reauth is pending, the request is
+  consumed rather than retried every five seconds.
 
 ## One-shot mode
 
