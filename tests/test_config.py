@@ -37,7 +37,7 @@ class TestConfig(unittest.TestCase):
             with patch.dict(os.environ, ENV, clear=True):
                 CONFIG = load_config()
 
-        self.assertEqual(CONFIG.keychain_service_name, "icloud-photos-backup")
+        self.assertEqual(CONFIG.keychain_service_name, "pyiclodoc-photos")
         self.assertEqual(CONFIG.manifest_path.name, "pyiclodoc-photos-manifest.json")
         self.assertEqual(CONFIG.auth_state_path.name, "pyiclodoc-photos-auth_state.json")
         self.assertEqual(CONFIG.heartbeat_path.name, "pyiclodoc-photos-heartbeat.txt")

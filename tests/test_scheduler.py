@@ -39,7 +39,7 @@ def create_config(**OVERRIDES) -> AppConfig:
         "icloud_password": "secret",
         "telegram_bot_token": "token",
         "telegram_chat_id": "1",
-        "keychain_service_name": "icloud-photos-backup",
+        "keychain_service_name": "pyiclodoc-photos",
         "run_once": False,
         "schedule_mode": "interval",
         "schedule_backup_time": "02:00",
