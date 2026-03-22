@@ -21,6 +21,7 @@ from app.syncer import (
     perform_incremental_sync,
     run_first_time_safety_net,
 )
+from app.transfer_runner import transfer_with_retry
 
 
 # ------------------------------------------------------------------------------
@@ -101,6 +102,27 @@ class ExplodingClient(FakeClient):
     def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
         _ = (REMOTE_PATH, LOCAL_PATH)
         raise RuntimeError("boom")
+
+
+# ------------------------------------------------------------------------------
+# This class fails once with a transient reason and then succeeds on retry.
+# ------------------------------------------------------------------------------
+class FlakyClient(FakeClient):
+    def __init__(self, ENTRIES: list[RemoteEntry], FAILURE_REASON: str):
+        super().__init__(ENTRIES)
+        self.failure_reason = FAILURE_REASON
+        self.failed_once_paths: set[str] = set()
+
+    def download_file_result(self, REMOTE_PATH: str, LOCAL_PATH: Path) -> DownloadResult:
+        self.download_calls.append(REMOTE_PATH)
+
+        if REMOTE_PATH not in self.failed_once_paths:
+            self.failed_once_paths.add(REMOTE_PATH)
+            return DownloadResult(False, failure_reason=self.failure_reason)
+
+        LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LOCAL_PATH.write_bytes(b"data")
+        return DownloadResult(True, written_bytes=4)
 
 
 # ------------------------------------------------------------------------------
@@ -188,6 +210,29 @@ class TestSyncer(unittest.TestCase):
 
         self.assertEqual(len(RESULT), 1)
         self.assertIn("/tmp/b", RESULT[0])
+
+# --------------------------------------------------------------------------
+# This test confirms transient transfer failures are retried before the sync
+# reports a final error.
+# --------------------------------------------------------------------------
+    def test_transfer_with_retry_retries_transient_failure_once(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0001.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-1",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0001.JPG",
+        )
+        CLIENT = FlakyClient([ENTRY], "timeout")
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            with patch("app.transfer_runner.time.sleep"):
+                RESULT = transfer_with_retry(CLIENT, Path(TMPDIR), ENTRY)
+
+        self.assertTrue(RESULT.success)
+        self.assertEqual(CLIENT.download_calls, [ENTRY.path, ENTRY.path])
 
 # --------------------------------------------------------------------------
 # This test confirms the first-run safety net passes cleanly when no files

@@ -15,6 +15,7 @@ install_dependency_stubs()
 
 from app.config import AppConfig
 from app.main import get_build_detail, main, validate_config
+from app.runtime_lock import RuntimeLockError
 from app.state import AuthState
 from app.telegram_messages import format_telegram_event
 
@@ -207,6 +208,25 @@ class TestMainEntrypoint(unittest.TestCase):
             self.assertIsNone(RESULT)
             RUN_PERSISTENT.assert_called_once()
             HEARTBEAT_STOP_EVENT.set.assert_called_once()
+
+# --------------------------------------------------------------------------
+# This test confirms main returns a startup error when another worker already
+# holds the shared runtime lock.
+# --------------------------------------------------------------------------
+    def test_main_returns_one_when_runtime_lock_is_already_held(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+
+            with patch("app.main.load_config", return_value=CONFIG):
+                with patch(
+                    "app.main.acquire_runtime_lock",
+                    side_effect=RuntimeLockError("already locked"),
+                ):
+                    with patch("app.main.log_line") as LOG_LINE:
+                        RESULT = main()
+
+        self.assertEqual(RESULT, 1)
+        LOG_LINE.assert_called()
 
 # --------------------------------------------------------------------------
 # This helper builds a minimal valid configuration object for main-entrypoint

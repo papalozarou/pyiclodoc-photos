@@ -8,6 +8,7 @@ from dataclasses import replace
 from importlib import metadata as importlib_metadata
 import os
 import threading
+from typing import TextIO
 
 from app.auth_flow import attempt_auth
 from app.config import AppConfig, load_config
@@ -15,6 +16,7 @@ from app.credential_store import configure_keyring, load_credentials, save_crede
 from app.heartbeat import start_heartbeat_updater
 from app.icloud_client import ICloudDriveClient
 from app.logger import log_line
+from app.runtime_lock import RuntimeLockError, acquire_runtime_lock, release_runtime_lock
 from app.runtime import notify, run_one_shot_runtime, run_persistent_runtime
 from app.scheduler import validate_schedule_config
 from app.state import load_auth_state
@@ -109,12 +111,23 @@ def main() -> int:
     TELEGRAM = TelegramConfig("", "")
     BUILD_DETAIL = get_build_detail()
     HEARTBEAT_STOP_EVENT: threading.Event | None = None
+    LOCK_HANDLE: TextIO | None = None
     STOP_STATUS = "Worker process exited."
 
     try:
         CONFIG = load_config()
         LOG_FILE = CONFIG.logs_dir / "pyiclodoc-photos-worker.log"
         TELEGRAM = TelegramConfig(CONFIG.telegram_bot_token, CONFIG.telegram_chat_id)
+        try:
+            LOCK_HANDLE = acquire_runtime_lock(
+                CONFIG.config_dir,
+                CONFIG.container_username,
+            )
+        except RuntimeLockError as ERROR:
+            log_line(LOG_FILE, "error", str(ERROR))
+            STOP_STATUS = "Worker startup blocked by active runtime lock."
+            return 1
+
         configure_keyring(CONFIG.config_dir)
         STORED_EMAIL, STORED_PASSWORD = load_credentials(
             CONFIG.keychain_service_name,
@@ -195,6 +208,7 @@ def main() -> int:
             )
         if HEARTBEAT_STOP_EVENT is not None:
             HEARTBEAT_STOP_EVENT.set()
+        release_runtime_lock(LOCK_HANDLE)
 
 
 if __name__ == "__main__":

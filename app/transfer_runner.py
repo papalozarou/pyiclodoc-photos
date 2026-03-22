@@ -18,6 +18,8 @@ from app.sync_plan import entry_metadata
 
 TRANSFER_PROGRESS_LOG_INTERVAL_SECONDS = 30.0
 PROGRESS_LOG_SEPARATOR = "------------------------------------------------------------"
+TRANSFER_MAX_ATTEMPTS = 3
+TRANSFER_RETRY_DELAY_SECONDS = 1.0
 
 
 # ------------------------------------------------------------------------------
@@ -93,6 +95,59 @@ def transfer_if_required(
 
 
 # ------------------------------------------------------------------------------
+# This function decides whether a failed transfer should be retried.
+#
+# 1. "FAILURE_REASON" is the transfer failure token returned by the client.
+#
+# Returns: True when the failure looks transient and worth retrying.
+# ------------------------------------------------------------------------------
+def should_retry_transfer(FAILURE_REASON: str) -> bool:
+    if FAILURE_REASON.startswith("worker_exception:"):
+        return True
+
+    return FAILURE_REASON in {
+        "download_read_failed",
+        "empty_download",
+        "incomplete_download",
+        "network_error",
+        "timeout",
+    }
+
+
+# ------------------------------------------------------------------------------
+# This function runs one transfer with bounded retry handling.
+#
+# 1. "CLIENT" is the active iCloud API wrapper.
+# 2. "OUTPUT_DIR" is local backup root.
+# 3. "ENTRY" is the remote photo metadata record.
+#
+# Returns: Final "DownloadResult" after success or the last failed attempt.
+# ------------------------------------------------------------------------------
+def transfer_with_retry(
+    CLIENT: ICloudDriveClient,
+    OUTPUT_DIR: Path,
+    ENTRY: RemoteEntry,
+) -> DownloadResult:
+    LAST_RESULT = DownloadResult(False, failure_reason="unknown_error")
+
+    for ATTEMPT in range(1, TRANSFER_MAX_ATTEMPTS + 1):
+        LAST_RESULT = transfer_if_required(CLIENT, OUTPUT_DIR, ENTRY)
+
+        if LAST_RESULT.success:
+            return LAST_RESULT
+
+        if ATTEMPT >= TRANSFER_MAX_ATTEMPTS:
+            return LAST_RESULT
+
+        if not should_retry_transfer(LAST_RESULT.failure_reason):
+            return LAST_RESULT
+
+        time.sleep(TRANSFER_RETRY_DELAY_SECONDS * ATTEMPT)
+
+    return LAST_RESULT
+
+
+# ------------------------------------------------------------------------------
 # This function records one failed canonical transfer outcome.
 #
 # 1. "ENTRY" is the remote file metadata for the failed transfer.
@@ -154,7 +209,7 @@ def run_transfers(
 
     with ThreadPoolExecutor(max_workers=WORKER_COUNT) as EXECUTOR:
         FUTURES = {
-            EXECUTOR.submit(transfer_if_required, CLIENT, OUTPUT_DIR, ENTRY): ENTRY
+            EXECUTOR.submit(transfer_with_retry, CLIENT, OUTPUT_DIR, ENTRY): ENTRY
             for ENTRY in TRANSFER_CANDIDATES
         }
         PENDING = set(FUTURES.keys())
