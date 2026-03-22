@@ -393,6 +393,37 @@ class TestSyncer(unittest.TestCase):
             self.assertEqual(SUMMARY.delete_error_files, 0)
 
 # --------------------------------------------------------------------------
+# This test confirms delete errors contribute to the primary sync error total
+# so operator-facing summaries do not under-report failed cleanup.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_counts_delete_errors_in_primary_total(self) -> None:
+        ENTRY = RemoteEntry(
+            path="library/2026/03/14/IMG_0001.JPG",
+            is_dir=False,
+            size=4,
+            modified="2026-03-14T09:31:00+00:00",
+            asset_id="asset-1",
+            created="2026-03-14T09:30:00+00:00",
+            download_name="IMG_0001.JPG",
+        )
+        CLIENT = FakeClient([ENTRY])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            with patch(
+                "app.syncer.delete_removed_local_paths",
+                return_value=(0, 0, 2),
+            ):
+                SUMMARY, _ = perform_incremental_sync(
+                    CLIENT,
+                    Path(TMPDIR),
+                    {},
+                    BACKUP_DELETE_REMOVED=True,
+                )
+
+        self.assertEqual(SUMMARY.error_files, 2)
+        self.assertEqual(SUMMARY.delete_error_files, 2)
+
+# --------------------------------------------------------------------------
 # This test confirms the sync emits failure summaries when transfers fail.
 # --------------------------------------------------------------------------
     def test_perform_incremental_sync_logs_transfer_failure_reasons(self) -> None:

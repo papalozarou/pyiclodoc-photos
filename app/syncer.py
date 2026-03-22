@@ -309,7 +309,7 @@ def perform_incremental_sync(
                 f"Transfer failure reason detail: {DETAIL_TEXT}",
             )
 
-    TOTAL_ERRORS = TRANSFER_ERRORS + DERIVED_ERRORS
+    TOTAL_ERRORS = TRANSFER_ERRORS + DERIVED_ERRORS + DELETE_ERRORS
 
     return SyncResult(
         total_files=len(FILES),
