@@ -34,7 +34,7 @@ from app.telegram_messages import (
 # Returns: Validation error list; empty list means configuration is usable.
 # ------------------------------------------------------------------------------
 def validate_config(CONFIG: AppConfig) -> list[str]:
-    ERRORS: list[str] = []
+    ERRORS: list[str] = list(CONFIG.config_errors)
 
     if not CONFIG.icloud_email:
         ERRORS.append("ICLOUD_EMAIL is required.")

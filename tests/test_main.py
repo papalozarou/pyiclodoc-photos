@@ -49,6 +49,7 @@ class TestMainEntrypoint(unittest.TestCase):
             "sync_workers": 99,
             "download_chunk_mib": 99,
             "backup_album_links_mode": "bad",
+            "config_errors": ("SYNC_DOWNLOAD_CHUNK_MIB must be an integer.",),
         })
         INVALID_THRESHOLD_CONFIG = AppConfig(**{
             **CONFIG.__dict__,
@@ -95,6 +96,7 @@ class TestMainEntrypoint(unittest.TestCase):
             ERRORS,
         )
         self.assertIn("SYNC_DOWNLOAD_CHUNK_MIB must be an integer between 1 and 16.", ERRORS)
+        self.assertIn("SYNC_DOWNLOAD_CHUNK_MIB must be an integer.", ERRORS)
         self.assertIn("BACKUP_ALBUM_LINKS_MODE must be one of: hardlink, copy.", ERRORS)
 
 # --------------------------------------------------------------------------

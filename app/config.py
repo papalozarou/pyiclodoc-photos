@@ -3,6 +3,8 @@
 # backup worker.
 # ------------------------------------------------------------------------------
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 import os
@@ -47,6 +49,7 @@ class AppConfig:
     backup_include_favourites: bool
     backup_root_library: str
     backup_root_albums: str
+    config_errors: tuple[str, ...] = ()
 
 
 # ------------------------------------------------------------------------------
@@ -73,11 +76,24 @@ def env_value(NAME: str, DEFAULT: str = "") -> str:
 # Invalid numeric input is treated as unset so container startup can surface
 # validation failures centrally instead of scattering parse exceptions here.
 # ------------------------------------------------------------------------------
-def env_int(NAME: str, DEFAULT: int) -> int:
-    RAW_VALUE = env_value(NAME, str(DEFAULT))
+def env_int(NAME: str, DEFAULT: int, ERRORS: list[str] | None = None) -> int:
+    RAW_VALUE = os.getenv(NAME)
 
-    if RAW_VALUE.isdigit():
-        return int(RAW_VALUE)
+    if RAW_VALUE is None:
+        return DEFAULT
+
+    CLEAN_VALUE = RAW_VALUE.strip()
+
+    if not CLEAN_VALUE:
+        return DEFAULT
+
+    SIGNED_VALUE = CLEAN_VALUE.removeprefix("-")
+
+    if SIGNED_VALUE.isdigit():
+        return int(CLEAN_VALUE)
+
+    if ERRORS is not None:
+        ERRORS.append(f"{NAME} must be an integer.")
 
     return DEFAULT
 
@@ -94,16 +110,28 @@ def env_int(NAME: str, DEFAULT: int) -> int:
 # This parser preserves the template contract where "auto" is represented as
 # zero and resolved later by the sync layer.
 # ------------------------------------------------------------------------------
-def env_workers(NAME: str, DEFAULT: int = 0) -> int:
-    RAW_VALUE = env_value(NAME, "auto").lower()
+def env_workers(
+    NAME: str,
+    DEFAULT: int = 0,
+    ERRORS: list[str] | None = None,
+) -> int:
+    RAW_VALUE = os.getenv(NAME)
 
-    if RAW_VALUE in {"", "auto"}:
+    if RAW_VALUE is None:
         return DEFAULT
 
-    if RAW_VALUE.isdigit():
-        VALUE = int(RAW_VALUE)
+    CLEAN_VALUE = RAW_VALUE.strip().lower()
+
+    if CLEAN_VALUE in {"", "auto"}:
+        return DEFAULT
+
+    if CLEAN_VALUE.isdigit():
+        VALUE = int(CLEAN_VALUE)
         if VALUE > 0:
             return VALUE
+
+    if ERRORS is not None:
+        ERRORS.append(f"{NAME} must be auto or a positive integer.")
 
     return DEFAULT
 
@@ -156,6 +184,7 @@ def ensure_dir(PATH: Path) -> Path:
 # https://docs.docker.com/compose/how-tos/use-secrets/
 # ------------------------------------------------------------------------------
 def load_config() -> AppConfig:
+    CONFIG_ERRORS: list[str] = []
     CONFIG_DIR = ensure_dir(Path(env_value("CONFIG_DIR", "/config")))
     OUTPUT_DIR = ensure_dir(Path(env_value("OUTPUT_DIR", "/output")))
     LOGS_DIR = ensure_dir(Path(env_value("LOGS_DIR", "/logs")))
@@ -175,13 +204,21 @@ def load_config() -> AppConfig:
         schedule_backup_time=env_value("SCHEDULE_BACKUP_TIME", "02:00"),
         schedule_weekdays=env_value("SCHEDULE_WEEKDAYS", "monday").lower(),
         schedule_monthly_week=env_value("SCHEDULE_MONTHLY_WEEK", "first").lower(),
-        schedule_interval_minutes=env_int("SCHEDULE_INTERVAL_MINUTES", 1440),
+        schedule_interval_minutes=env_int(
+            "SCHEDULE_INTERVAL_MINUTES",
+            1440,
+            CONFIG_ERRORS,
+        ),
         backup_discovery_mode=env_value("BACKUP_DISCOVERY_MODE", "full").lower(),
-        backup_until_found_count=env_int("BACKUP_UNTIL_FOUND_COUNT", 50),
+        backup_until_found_count=env_int(
+            "BACKUP_UNTIL_FOUND_COUNT",
+            50,
+            CONFIG_ERRORS,
+        ),
         backup_delete_removed=env_bool("BACKUP_DELETE_REMOVED", False),
-        sync_workers=env_workers("SYNC_DOWNLOAD_WORKERS", 0),
-        download_chunk_mib=env_int("SYNC_DOWNLOAD_CHUNK_MIB", 4),
-        reauth_interval_days=env_int("REAUTH_INTERVAL_DAYS", 30),
+        sync_workers=env_workers("SYNC_DOWNLOAD_WORKERS", 0, CONFIG_ERRORS),
+        download_chunk_mib=env_int("SYNC_DOWNLOAD_CHUNK_MIB", 4, CONFIG_ERRORS),
+        reauth_interval_days=env_int("REAUTH_INTERVAL_DAYS", 30, CONFIG_ERRORS),
         output_dir=OUTPUT_DIR,
         config_dir=CONFIG_DIR,
         logs_dir=LOGS_DIR,
@@ -191,11 +228,16 @@ def load_config() -> AppConfig:
         cookie_dir=COOKIE_DIR,
         session_dir=SESSION_DIR,
         icloudpd_compat_dir=COMPAT_DIR,
-        safety_net_sample_size=env_int("SAFETY_NET_SAMPLE_SIZE", 200),
+        safety_net_sample_size=env_int(
+            "SAFETY_NET_SAMPLE_SIZE",
+            200,
+            CONFIG_ERRORS,
+        ),
         backup_albums_enabled=env_bool("BACKUP_ALBUMS_ENABLED", True),
         backup_album_links_mode=env_value("BACKUP_ALBUM_LINKS_MODE", "hardlink").lower(),
         backup_include_shared_albums=env_bool("BACKUP_INCLUDE_SHARED_ALBUMS", True),
         backup_include_favourites=env_bool("BACKUP_INCLUDE_FAVOURITES", True),
         backup_root_library=env_value("BACKUP_ROOT_LIBRARY", "library"),
         backup_root_albums=env_value("BACKUP_ROOT_ALBUMS", "albums"),
+        config_errors=tuple(CONFIG_ERRORS),
     )
