@@ -105,14 +105,16 @@ def get_build_detail() -> dict[str, str]:
 # Returns: Non-zero on startup validation/runtime failure.
 # ------------------------------------------------------------------------------
 def main() -> int:
-    CONFIG = load_config()
-    LOG_FILE = CONFIG.logs_dir / "pyiclodoc-photos-worker.log"
-    TELEGRAM = TelegramConfig(CONFIG.telegram_bot_token, CONFIG.telegram_chat_id)
+    CONFIG: AppConfig | None = None
+    TELEGRAM = TelegramConfig("", "")
     BUILD_DETAIL = get_build_detail()
     HEARTBEAT_STOP_EVENT: threading.Event | None = None
     STOP_STATUS = "Worker process exited."
 
     try:
+        CONFIG = load_config()
+        LOG_FILE = CONFIG.logs_dir / "pyiclodoc-photos-worker.log"
+        TELEGRAM = TelegramConfig(CONFIG.telegram_bot_token, CONFIG.telegram_chat_id)
         configure_keyring(CONFIG.config_dir)
         STORED_EMAIL, STORED_PASSWORD = load_credentials(
             CONFIG.keychain_service_name,
@@ -186,10 +188,11 @@ def main() -> int:
             BUILD_DETAIL,
         )
     finally:
-        notify(
-            TELEGRAM,
-            build_container_stopped_message(CONFIG.icloud_email, STOP_STATUS),
-        )
+        if CONFIG is not None:
+            notify(
+                TELEGRAM,
+                build_container_stopped_message(CONFIG.icloud_email, STOP_STATUS),
+            )
         if HEARTBEAT_STOP_EVENT is not None:
             HEARTBEAT_STOP_EVENT.set()
 

@@ -114,6 +114,18 @@ class TestMainEntrypoint(unittest.TestCase):
         self.assertEqual(BUILD_DETAIL["pyicloud_version"], "unknown")
 
 # --------------------------------------------------------------------------
+# This test confirms startup exceptions from config loading are not masked by
+# shutdown handling.
+# --------------------------------------------------------------------------
+    def test_main_preserves_load_config_failure_without_shutdown_notify(self) -> None:
+        with patch("app.main.load_config", side_effect=RuntimeError("boom")):
+            with patch("app.main.notify") as NOTIFY:
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    main()
+
+        NOTIFY.assert_not_called()
+
+# --------------------------------------------------------------------------
 # This test confirms main returns a validation error code and logs the
 # validation failures.
 # --------------------------------------------------------------------------
