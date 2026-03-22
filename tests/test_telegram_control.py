@@ -161,17 +161,20 @@ class TestTelegramControl(unittest.TestCase):
             AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
             SENT_MESSAGES: list[str] = []
 
-            OUTCOME = handle_command(
-                "reauth",
-                "",
-                CONFIG,
-                AUTH_STATE,
-                False,
-                SENT_MESSAGES.append,
-                lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, False, PROVIDED_CODE),
-            )
+            with patch("app.telegram_control.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                OUTCOME = handle_command(
+                    "reauth",
+                    "",
+                    CONFIG,
+                    AUTH_STATE,
+                    False,
+                    SENT_MESSAGES.append,
+                    lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, False, PROVIDED_CODE),
+                )
 
         self.assertTrue(OUTCOME.auth_state.reauth_pending)
+        self.assertEqual(OUTCOME.auth_state.reminder_stage, "prompt2")
+        self.assertEqual(OUTCOME.auth_state.last_reminder_utc, "2026-03-15T12:00:00+00:00")
         self.assertFalse(OUTCOME.backup_requested)
         self.assertIn("Reauthentication required", SENT_MESSAGES[0])
 

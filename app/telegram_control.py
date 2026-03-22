@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from app.config import AppConfig
-from app.state import AuthState, save_auth_state
+from app.state import AuthState, now_iso, save_auth_state
 from app.telegram_bot import TelegramConfig, fetch_updates, parse_command
 from app.telegram_messages import (
     build_auth_required_message,
@@ -104,7 +104,12 @@ def handle_command(
         return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     if COMMAND == "reauth" and not ARGS:
-        NEW_STATE = replace(AUTH_STATE, reauth_pending=True)
+        NEW_STATE = replace(
+            AUTH_STATE,
+            reauth_pending=True,
+            reminder_stage="prompt2",
+            last_reminder_utc=now_iso(),
+        )
         DETAILS = ""
         if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):
             DETAILS = "Auth state persistence failed."

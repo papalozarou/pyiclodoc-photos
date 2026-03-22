@@ -94,6 +94,7 @@ def attempt_auth(
             auth_pending=False,
             reauth_pending=False,
             reminder_stage="none",
+            last_reminder_utc="",
         )
         if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
@@ -141,19 +142,37 @@ def process_reauth_reminders(
         if AUTH_STATE.reminder_stage == "none" and not AUTH_STATE.reauth_pending:
             return AUTH_STATE
 
-        NEW_STATE = replace(AUTH_STATE, reminder_stage="none", reauth_pending=False)
+        NEW_STATE = replace(
+            AUTH_STATE,
+            reminder_stage="none",
+            reauth_pending=False,
+            last_reminder_utc="",
+        )
         save_auth_state(AUTH_STATE_PATH, NEW_STATE)
         return NEW_STATE
 
-    if DAYS_LEFT <= 2 and AUTH_STATE.reminder_stage != "prompt2":
+    if (
+        DAYS_LEFT <= 2
+        and AUTH_STATE.reminder_stage != "prompt2"
+        and not AUTH_STATE.reauth_pending
+    ):
         NOTIFY_MESSAGE(build_reauth_due_message(USERNAME))
-        NEW_STATE = replace(AUTH_STATE, reminder_stage="prompt2", reauth_pending=True)
+        NEW_STATE = replace(
+            AUTH_STATE,
+            reminder_stage="prompt2",
+            reauth_pending=True,
+            last_reminder_utc=now_iso(),
+        )
         save_auth_state(AUTH_STATE_PATH, NEW_STATE)
         return NEW_STATE
 
-    if DAYS_LEFT <= 5 and AUTH_STATE.reminder_stage == "none":
+    if DAYS_LEFT <= 5 and AUTH_STATE.reminder_stage == "none" and not AUTH_STATE.reauth_pending:
         NOTIFY_MESSAGE(build_reauth_reminder_message())
-        NEW_STATE = replace(AUTH_STATE, reminder_stage="alert5")
+        NEW_STATE = replace(
+            AUTH_STATE,
+            reminder_stage="alert5",
+            last_reminder_utc=now_iso(),
+        )
         save_auth_state(AUTH_STATE_PATH, NEW_STATE)
         return NEW_STATE
 

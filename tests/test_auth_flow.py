@@ -246,18 +246,20 @@ class TestAuthFlow(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as TMPDIR:
             STATE_PATH = Path(TMPDIR) / "auth.json"
-            NEW_STATE = process_reauth_reminders(
-                STATE,
-                STATE_PATH,
-                SENT_MESSAGES.append,
-                "alice",
-                2,
-            )
+            with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                NEW_STATE = process_reauth_reminders(
+                    STATE,
+                    STATE_PATH,
+                    SENT_MESSAGES.append,
+                    "alice",
+                    2,
+                )
 
             SAVED_STATE = load_auth_state(STATE_PATH)
 
         self.assertTrue(NEW_STATE.reauth_pending)
         self.assertEqual(NEW_STATE.reminder_stage, "prompt2")
+        self.assertEqual(NEW_STATE.last_reminder_utc, "2026-03-15T12:00:00+00:00")
         self.assertTrue(SAVED_STATE.reauth_pending)
         self.assertIn("Reauthentication required", SENT_MESSAGES[0])
 
@@ -273,18 +275,20 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=5):
-                NEW_STATE = process_reauth_reminders(
-                    STATE,
-                    STATE_PATH,
-                    SENT_MESSAGES.append,
-                    "alice",
-                    30,
-                )
+                with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                    NEW_STATE = process_reauth_reminders(
+                        STATE,
+                        STATE_PATH,
+                        SENT_MESSAGES.append,
+                        "alice",
+                        30,
+                    )
 
             SAVED_STATE = load_auth_state(STATE_PATH)
 
         self.assertFalse(NEW_STATE.reauth_pending)
         self.assertEqual(NEW_STATE.reminder_stage, "alert5")
+        self.assertEqual(NEW_STATE.last_reminder_utc, "2026-03-15T12:00:00+00:00")
         self.assertEqual(SAVED_STATE, NEW_STATE)
         self.assertIn("Reauth reminder", SENT_MESSAGES[0])
 
@@ -343,6 +347,37 @@ class TestAuthFlow(unittest.TestCase):
 # --------------------------------------------------------------------------
     def test_process_reauth_reminders_returns_existing_state_when_no_transition_applies(self) -> None:
         STATE = AuthState("2026-03-10T00:00:00+00:00", False, True, "prompt2")
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.get_reauth_days_left", return_value=2):
+                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                    NEW_STATE = process_reauth_reminders(
+                        STATE,
+                        STATE_PATH,
+                        SENT_MESSAGES.append,
+                        "alice",
+                        30,
+                    )
+
+        self.assertEqual(NEW_STATE, STATE)
+        self.assertEqual(SENT_MESSAGES, [])
+        SAVE_AUTH_STATE.assert_not_called()
+
+# --------------------------------------------------------------------------
+# This test confirms restart processing does not resend the reauth prompt when
+# reauth is already pending from an earlier prompt or manual command.
+# --------------------------------------------------------------------------
+    def test_process_reauth_reminders_skips_duplicate_prompt_when_reauth_is_pending(self) -> None:
+        STATE = AuthState(
+            "2026-03-10T00:00:00+00:00",
+            False,
+            True,
+            "none",
+            "2026-03-15T12:00:00+00:00",
+        )
         SENT_MESSAGES: list[str] = []
 
         with tempfile.TemporaryDirectory() as TMPDIR:
