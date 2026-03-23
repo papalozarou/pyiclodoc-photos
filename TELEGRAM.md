@@ -28,6 +28,10 @@ Supported command forms:
 5. If a worker restart clears in-memory auth session state, send `auth` or
    `reauth` without a code first to trigger a new challenge prompt.
 6. If successful, pending auth state is cleared and normal backup flow resumes.
+7. Manual `auth` and `reauth` commands become live only after auth-state
+   persistence succeeds. If `/config` state cannot be written, the worker sends
+   an explicit auth-state update failure message instead of advertising a
+   pending state that was not saved.
 
 *N.B.*
 
@@ -40,6 +44,8 @@ resolve it.
 - When reauthentication is due within five days, the worker sends a reminder.
 - When reauthentication is due within two days, the worker switches to a
   reauth-required prompt.
+- Reminder notifications are emitted only after the updated reminder state has
+  been persisted successfully.
 - Manual `reauth` without a code sets an explicit manual reauth-pending state.
 - That manual reauth state stays pending until auth completes, rather than
   being cleared by the normal schedule-driven reminder window.
@@ -72,6 +78,7 @@ Current message templates include:
 - `🔑 PCD Photos - Reauthentication required`
 - `🔒 PCD Photos - Authentication complete`
 - `❌ PCD Photos - Authentication failed`
+- `⚠️ PCD Photos - Auth state update failed`
 - `📥 PCD Photos - Backup requested`
 - `⬇️ PCD Photos - Backup started`
 - `📦 PCD Photos - Backup complete`

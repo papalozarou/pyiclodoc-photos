@@ -181,7 +181,7 @@ class TestTelegramControl(unittest.TestCase):
 
 # --------------------------------------------------------------------------
 # This test confirms command-side auth persistence failure is surfaced in the
-# outcome details instead of being assumed successful.
+# outcome details and leaves in-memory state unchanged.
 # --------------------------------------------------------------------------
     def test_handle_command_surfaces_auth_state_persistence_failure(self) -> None:
         with tempfile.TemporaryDirectory() as TMPDIR:
@@ -191,7 +191,7 @@ class TestTelegramControl(unittest.TestCase):
             AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
             SENT_MESSAGES: list[str] = []
 
-            with patch("app.telegram_control.save_auth_state", return_value=False):
+            with patch("app.telegram_control.persist_auth_state_transition", return_value=(AUTH_STATE, False)):
                 OUTCOME = handle_command(
                     "auth",
                     "",
@@ -203,6 +203,35 @@ class TestTelegramControl(unittest.TestCase):
                 )
 
         self.assertEqual(OUTCOME.details, "Auth state persistence failed.")
+        self.assertEqual(OUTCOME.auth_state, AUTH_STATE)
+        self.assertIn("Auth state update failed", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms failed reauth-state persistence also leaves the existing
+# state unchanged instead of creating an in-memory-only pending reauth state.
+# --------------------------------------------------------------------------
+    def test_handle_command_keeps_existing_state_when_reauth_persistence_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            ROOT_DIR = Path(TMPDIR)
+            CONFIG = create_config(ROOT_DIR)
+            CONFIG.config_dir.mkdir(parents=True, exist_ok=True)
+            AUTH_STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+            SENT_MESSAGES: list[str] = []
+
+            with patch("app.telegram_control.persist_auth_state_transition", return_value=(AUTH_STATE, False)):
+                OUTCOME = handle_command(
+                    "reauth",
+                    "",
+                    CONFIG,
+                    AUTH_STATE,
+                    False,
+                    SENT_MESSAGES.append,
+                    lambda CURRENT_STATE, PROVIDED_CODE: (CURRENT_STATE, False, PROVIDED_CODE),
+                )
+
+        self.assertEqual(OUTCOME.details, "Auth state persistence failed.")
+        self.assertEqual(OUTCOME.auth_state, AUTH_STATE)
+        self.assertIn("Auth state update failed", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
 # This test confirms auth commands with a code delegate to the auth executor

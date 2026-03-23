@@ -132,6 +132,14 @@ and album subtrees.
   `.corrupt` suffix and carries on with empty in-memory state.
 - This is intended to turn truncated or manually damaged state files into a
   recoverable operator problem rather than a startup crash.
+- If auth-state JSON is valid but fields are malformed, the worker normalizes
+  or resets the affected fields, logs what changed, and continues with a safe
+  in-memory auth state.
+- Persisted auth timestamps are expected to be offset-aware ISO-8601 values.
+  If a legacy or hand-edited timestamp omits its timezone offset, the worker
+  logs the repair and treats it as UTC before reminder logic runs.
+- If manifest JSON is valid but not a top-level object, the worker logs that
+  the manifest shape was invalid and continues with an empty manifest.
 - Each backup run logs manifest growth detail as `previous_entries`,
   `refreshed_entries`, and `delta` so long-term manifest size can be monitored
   from normal worker logs.

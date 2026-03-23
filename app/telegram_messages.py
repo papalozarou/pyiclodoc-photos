@@ -192,6 +192,22 @@ def build_manual_reauth_message(USERNAME: str, APPLE_ID: str) -> str:
 
 
 # ------------------------------------------------------------------------------
+# This function builds the auth-state persistence failure Telegram message.
+#
+# 1. "ACTION_LABEL" names the rejected auth or reauth command.
+#
+# Returns: Formatted Telegram message text.
+# ------------------------------------------------------------------------------
+def build_auth_state_persistence_failed_message(ACTION_LABEL: str) -> str:
+    return format_telegram_event(
+        "⚠️",
+        "Auth state update failed",
+        f"Could not persist the requested {ACTION_LABEL} state change.",
+        ["Retry the command after checking /config write access."],
+    )
+
+
+# ------------------------------------------------------------------------------
 # This function builds the reauthentication reminder Telegram message.
 #
 # Returns: Formatted Telegram message text.

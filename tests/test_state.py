@@ -74,6 +74,82 @@ class TestState(unittest.TestCase):
             self.assertIn("State write failed", OUTPUT.getvalue())
 
 # --------------------------------------------------------------------------
+# This test confirms a timezone-less persisted auth timestamp is normalized
+# to offset-aware UTC and logged once during load.
+# --------------------------------------------------------------------------
+    def test_load_auth_state_normalizes_timezone_less_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth_state.json"
+            OUTPUT = StringIO()
+            STATE_PATH.write_text(
+                (
+                    '{'
+                    '"last_auth_utc":"2026-03-10T12:00:00",'
+                    '"auth_pending":false,'
+                    '"reauth_pending":false,'
+                    '"reminder_stage":"none"'
+                    '}'
+                ),
+                encoding="utf-8",
+            )
+
+            with redirect_stdout(OUTPUT):
+                AUTH_STATE = load_auth_state(STATE_PATH)
+
+            self.assertEqual(AUTH_STATE.last_auth_utc, "2026-03-10T12:00:00+00:00")
+            self.assertIn("timestamp had no timezone offset", OUTPUT.getvalue())
+
+# --------------------------------------------------------------------------
+# This test confirms invalid auth-state field types are reset to defaults and
+# logged rather than being coerced loosely.
+# --------------------------------------------------------------------------
+    def test_load_auth_state_resets_invalid_field_types(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth_state.json"
+            OUTPUT = StringIO()
+            STATE_PATH.write_text(
+                (
+                    '{'
+                    '"last_auth_utc":123,'
+                    '"auth_pending":"false",'
+                    '"reauth_pending":"true",'
+                    '"reminder_stage":"later",'
+                    '"last_reminder_utc":7,'
+                    '"manual_reauth_pending":"no"'
+                    '}'
+                ),
+                encoding="utf-8",
+            )
+
+            with redirect_stdout(OUTPUT):
+                AUTH_STATE = load_auth_state(STATE_PATH)
+
+            self.assertEqual(AUTH_STATE.last_auth_utc, "1970-01-01T00:00:00+00:00")
+            self.assertFalse(AUTH_STATE.auth_pending)
+            self.assertFalse(AUTH_STATE.reauth_pending)
+            self.assertEqual(AUTH_STATE.reminder_stage, "none")
+            self.assertEqual(AUTH_STATE.last_reminder_utc, "")
+            self.assertFalse(AUTH_STATE.manual_reauth_pending)
+            self.assertIn('Invalid auth state field "auth_pending"', OUTPUT.getvalue())
+            self.assertIn('Invalid auth state field "reminder_stage"', OUTPUT.getvalue())
+
+# --------------------------------------------------------------------------
+# This test confirms valid JSON manifest payloads with the wrong top-level
+# shape are ignored with an explicit warning.
+# --------------------------------------------------------------------------
+    def test_load_manifest_warns_on_non_object_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            MANIFEST_PATH = Path(TMPDIR) / "manifest.json"
+            OUTPUT = StringIO()
+            MANIFEST_PATH.write_text("[]", encoding="utf-8")
+
+            with redirect_stdout(OUTPUT):
+                MANIFEST = load_manifest(MANIFEST_PATH)
+
+            self.assertEqual(MANIFEST, {})
+            self.assertIn("Invalid manifest state ignored", OUTPUT.getvalue())
+
+# --------------------------------------------------------------------------
 # This test confirms the auth-state and manifest save helpers surface the
 # boolean write contract from the shared state layer.
 # --------------------------------------------------------------------------

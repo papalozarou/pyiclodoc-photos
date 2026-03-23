@@ -6,12 +6,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 from pathlib import Path
 import json
 from typing import Any
 
+from dateutil import parser as date_parser
+
 from app.logger import get_timestamp
 from app.time_utils import now_local_iso
+
+
+DEFAULT_AUTH_TIME = "1970-01-01T00:00:00+00:00"
+VALID_REMINDER_STAGES = {"none", "alert5", "prompt2"}
 
 
 # ------------------------------------------------------------------------------
@@ -34,7 +41,7 @@ class AuthState:
 #
 # Returns: Parsed dictionary payload, or an empty dictionary when absent.
 # ------------------------------------------------------------------------------
-def read_json(PATH: Path) -> dict[str, Any]:
+def read_json(PATH: Path) -> Any:
     if not PATH.exists():
         return {}
 
@@ -137,6 +144,152 @@ def now_iso() -> str:
 
 
 # ------------------------------------------------------------------------------
+# This function returns the default authentication state model.
+#
+# Returns: Safe default "AuthState" for missing or invalid persisted payloads.
+# ------------------------------------------------------------------------------
+def default_auth_state() -> AuthState:
+    return AuthState(
+        last_auth_utc=DEFAULT_AUTH_TIME,
+        auth_pending=False,
+        reauth_pending=False,
+        reminder_stage="none",
+        last_reminder_utc="",
+        manual_reauth_pending=False,
+    )
+
+
+# ------------------------------------------------------------------------------
+# This function validates one persisted boolean auth-state field.
+#
+# 1. "VALUE" is the raw payload field value.
+# 2. "PATH" is the auth-state file path.
+# 3. "FIELD_NAME" is the persisted field key.
+# 4. "DEFAULT" is the fallback boolean.
+#
+# Returns: Validated boolean value.
+# ------------------------------------------------------------------------------
+def validate_auth_state_bool(
+    VALUE: Any,
+    PATH: Path,
+    FIELD_NAME: str,
+    DEFAULT: bool,
+) -> bool:
+    if VALUE is None:
+        return DEFAULT
+
+    if isinstance(VALUE, bool):
+        return VALUE
+
+    warn_state_issue(
+        f'Invalid auth state field "{FIELD_NAME}" at {PATH}: '
+        f"expected boolean, using default {DEFAULT}.",
+    )
+    return DEFAULT
+
+
+# ------------------------------------------------------------------------------
+# This function validates one persisted reminder-stage value.
+#
+# 1. "VALUE" is the raw payload field value.
+# 2. "PATH" is the auth-state file path.
+#
+# Returns: Validated reminder-stage string.
+# ------------------------------------------------------------------------------
+def validate_reminder_stage(VALUE: Any, PATH: Path) -> str:
+    if VALUE is None:
+        return "none"
+
+    if isinstance(VALUE, str) and VALUE in VALID_REMINDER_STAGES:
+        return VALUE
+
+    warn_state_issue(
+        f'Invalid auth state field "reminder_stage" at {PATH}: '
+        'expected one of "none", "alert5", or "prompt2". Using default "none".',
+    )
+    return "none"
+
+
+# ------------------------------------------------------------------------------
+# This function normalizes one persisted auth-state timestamp.
+#
+# 1. "VALUE" is the raw payload field value.
+# 2. "PATH" is the auth-state file path.
+# 3. "FIELD_NAME" is the persisted field key.
+# 4. "DEFAULT" is the fallback ISO-8601 timestamp or empty string.
+# 5. "ALLOW_EMPTY" allows an empty string to remain empty.
+#
+# Returns: Offset-aware ISO-8601 string or the configured default.
+# ------------------------------------------------------------------------------
+def normalize_auth_state_timestamp(
+    VALUE: Any,
+    PATH: Path,
+    FIELD_NAME: str,
+    DEFAULT: str,
+    ALLOW_EMPTY: bool = False,
+) -> str:
+    if VALUE is None:
+        return DEFAULT
+
+    if not isinstance(VALUE, str):
+        warn_state_issue(
+            f'Invalid auth state field "{FIELD_NAME}" at {PATH}: '
+            f"expected string timestamp, using default {DEFAULT or '<empty>'}.",
+        )
+        return DEFAULT
+
+    TIMESTAMP_TEXT = VALUE.strip()
+
+    if not TIMESTAMP_TEXT:
+        if ALLOW_EMPTY:
+            return ""
+
+        warn_state_issue(
+            f'Invalid auth state field "{FIELD_NAME}" at {PATH}: '
+            f"empty timestamp, using default {DEFAULT}.",
+        )
+        return DEFAULT
+
+    try:
+        PARSED = date_parser.isoparse(TIMESTAMP_TEXT)
+    except (TypeError, ValueError, OverflowError):
+        warn_state_issue(
+            f'Invalid auth state field "{FIELD_NAME}" at {PATH}: '
+            f"{TIMESTAMP_TEXT!r}. Using default {DEFAULT or '<empty>'}.",
+        )
+        return DEFAULT
+
+    if PARSED.tzinfo is None or PARSED.utcoffset() is None:
+        warn_state_issue(
+            f'Normalized auth state field "{FIELD_NAME}" at {PATH}: '
+            "timestamp had no timezone offset, assuming UTC.",
+        )
+        PARSED = PARSED.replace(tzinfo=timezone.utc)
+
+    return PARSED.isoformat()
+
+
+# ------------------------------------------------------------------------------
+# This function persists one auth-state transition before it becomes live.
+#
+# 1. "PATH" is the auth-state file path.
+# 2. "CURRENT_STATE" is the current in-memory state.
+# 3. "NEXT_STATE" is the proposed next state.
+#
+# Returns: Tuple "(state, persisted)" with the safe live state.
+# ------------------------------------------------------------------------------
+def persist_auth_state_transition(
+    PATH: Path,
+    CURRENT_STATE: AuthState,
+    NEXT_STATE: AuthState,
+) -> tuple[AuthState, bool]:
+    if not save_auth_state(PATH, NEXT_STATE):
+        return CURRENT_STATE, False
+
+    return NEXT_STATE, True
+
+
+# ------------------------------------------------------------------------------
 # This function loads persisted authentication state with robust defaults.
 #
 # 1. "PATH" is the JSON state file location.
@@ -149,15 +302,46 @@ def now_iso() -> str:
 # ------------------------------------------------------------------------------
 def load_auth_state(PATH: Path) -> AuthState:
     PAYLOAD = read_json(PATH)
-    DEFAULT_TIME = "1970-01-01T00:00:00+00:00"
+
+    if not isinstance(PAYLOAD, dict):
+        warn_state_issue(
+            f"Invalid auth state ignored at {PATH}: expected JSON object.",
+        )
+        return default_auth_state()
 
     return AuthState(
-        last_auth_utc=str(PAYLOAD.get("last_auth_utc", DEFAULT_TIME)),
-        auth_pending=bool(PAYLOAD.get("auth_pending", False)),
-        reauth_pending=bool(PAYLOAD.get("reauth_pending", False)),
-        reminder_stage=str(PAYLOAD.get("reminder_stage", "none")),
-        last_reminder_utc=str(PAYLOAD.get("last_reminder_utc", "")),
-        manual_reauth_pending=bool(PAYLOAD.get("manual_reauth_pending", False)),
+        last_auth_utc=normalize_auth_state_timestamp(
+            PAYLOAD.get("last_auth_utc"),
+            PATH,
+            "last_auth_utc",
+            DEFAULT_AUTH_TIME,
+        ),
+        auth_pending=validate_auth_state_bool(
+            PAYLOAD.get("auth_pending"),
+            PATH,
+            "auth_pending",
+            False,
+        ),
+        reauth_pending=validate_auth_state_bool(
+            PAYLOAD.get("reauth_pending"),
+            PATH,
+            "reauth_pending",
+            False,
+        ),
+        reminder_stage=validate_reminder_stage(PAYLOAD.get("reminder_stage"), PATH),
+        last_reminder_utc=normalize_auth_state_timestamp(
+            PAYLOAD.get("last_reminder_utc"),
+            PATH,
+            "last_reminder_utc",
+            "",
+            ALLOW_EMPTY=True,
+        ),
+        manual_reauth_pending=validate_auth_state_bool(
+            PAYLOAD.get("manual_reauth_pending"),
+            PATH,
+            "manual_reauth_pending",
+            False,
+        ),
     )
 
 
@@ -196,6 +380,9 @@ def load_manifest(PATH: Path) -> dict[str, dict[str, Any]]:
     PAYLOAD = read_json(PATH)
 
     if not isinstance(PAYLOAD, dict):
+        warn_state_issue(
+            f"Invalid manifest state ignored at {PATH}: expected JSON object.",
+        )
         return {}
 
     return {

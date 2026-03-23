@@ -13,11 +13,12 @@ from typing import Callable
 from dateutil import parser as date_parser
 
 from app.icloud_client import ICloudDriveClient
-from app.state import AuthState, now_iso, save_auth_state
+from app.state import AuthState, now_iso, persist_auth_state_transition
 from app.telegram_messages import (
     build_auth_complete_message,
     build_auth_failed_message,
     build_auth_required_message,
+    build_auth_state_persistence_failed_message,
     build_reauth_due_message,
     build_reauth_reminder_message,
     format_apple_id_label,
@@ -37,9 +38,14 @@ from app.time_utils import now_local
 # ------------------------------------------------------------------------------
 def parse_iso(VALUE: str) -> datetime:
     try:
-        return date_parser.isoparse(VALUE)
+        PARSED = date_parser.isoparse(VALUE)
     except (TypeError, ValueError, OverflowError):
         return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    if PARSED.tzinfo is None or PARSED.utcoffset() is None:
+        return PARSED.replace(tzinfo=timezone.utc)
+
+    return PARSED
 
 
 # ------------------------------------------------------------------------------
@@ -76,10 +82,12 @@ def persist_reauth_transition(
     CURRENT_STATE: AuthState,
     NEXT_STATE: AuthState,
 ) -> AuthState:
-    if not save_auth_state(AUTH_STATE_PATH, NEXT_STATE):
-        return CURRENT_STATE
-
-    return NEXT_STATE
+    PERSISTED_STATE, _ = persist_auth_state_transition(
+        AUTH_STATE_PATH,
+        CURRENT_STATE,
+        NEXT_STATE,
+    )
+    return PERSISTED_STATE
 
 
 # ------------------------------------------------------------------------------
@@ -114,7 +122,7 @@ def attempt_auth(
         IS_SUCCESS, DETAILS = CLIENT.start_authentication()
 
     if IS_SUCCESS:
-        NEW_STATE = AuthState(
+        PROPOSED_STATE = AuthState(
             last_auth_utc=now_iso(),
             auth_pending=False,
             reauth_pending=False,
@@ -122,23 +130,41 @@ def attempt_auth(
             last_reminder_utc="",
             manual_reauth_pending=False,
         )
-        if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+        NEW_STATE, PERSISTED = persist_auth_state_transition(
+            AUTH_STATE_PATH,
+            AUTH_STATE,
+            PROPOSED_STATE,
+        )
+        if not PERSISTED:
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
         NOTIFY_MESSAGE(build_auth_complete_message(APPLE_ID_LABEL, DETAILS))
         return NEW_STATE, True, DETAILS
 
     if "Two-factor code is required" in DETAILS:
-        NEW_STATE = replace(AUTH_STATE, auth_pending=True)
-        if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+        PROPOSED_STATE = replace(AUTH_STATE, auth_pending=True)
+        NEW_STATE, PERSISTED = persist_auth_state_transition(
+            AUTH_STATE_PATH,
+            AUTH_STATE,
+            PROPOSED_STATE,
+        )
+        if not PERSISTED:
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
+            NOTIFY_MESSAGE(build_auth_state_persistence_failed_message("auth"))
+            return NEW_STATE, False, DETAILS
+
         NOTIFY_MESSAGE(build_auth_required_message(USERNAME, APPLE_ID_LABEL))
         return NEW_STATE, False, DETAILS
 
-    NEW_STATE = replace(
+    PROPOSED_STATE = replace(
         AUTH_STATE,
         auth_pending=AUTH_STATE.auth_pending if CODE else False,
     )
-    if not save_auth_state(AUTH_STATE_PATH, NEW_STATE):
+    NEW_STATE, PERSISTED = persist_auth_state_transition(
+        AUTH_STATE_PATH,
+        AUTH_STATE,
+        PROPOSED_STATE,
+    )
+    if not PERSISTED:
         DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
     NOTIFY_MESSAGE(build_auth_failed_message(APPLE_ID_LABEL, DETAILS))
     return NEW_STATE, False, DETAILS

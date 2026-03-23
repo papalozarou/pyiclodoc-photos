@@ -51,6 +51,15 @@ class TestAuthFlow(unittest.TestCase):
         self.assertEqual(RESULT.isoformat(), "1970-01-01T00:00:00+00:00")
 
 # --------------------------------------------------------------------------
+# This test confirms timezone-less ISO values are normalized to UTC so
+# reminder math stays offset-aware.
+# --------------------------------------------------------------------------
+    def test_parse_iso_normalizes_timezone_less_value_to_utc(self) -> None:
+        RESULT = parse_iso("2026-03-10T12:00:00")
+
+        self.assertEqual(RESULT.isoformat(), "2026-03-10T12:00:00+00:00")
+
+# --------------------------------------------------------------------------
 # This test confirms reauth day calculation uses whole elapsed days.
 # --------------------------------------------------------------------------
     def test_get_reauth_days_left_uses_elapsed_whole_days(self) -> None:
@@ -59,6 +68,19 @@ class TestAuthFlow(unittest.TestCase):
             return_value=parse_iso("2026-03-15T12:00:00+00:00"),
         ):
             DAYS_LEFT = get_reauth_days_left("2026-03-10T13:00:00+00:00", 10)
+
+        self.assertEqual(DAYS_LEFT, 6)
+
+# --------------------------------------------------------------------------
+# This test confirms reauth day calculation tolerates timezone-less stored
+# timestamps by treating them as UTC.
+# --------------------------------------------------------------------------
+    def test_get_reauth_days_left_accepts_timezone_less_timestamp(self) -> None:
+        with patch(
+            "app.auth_flow.now_local",
+            return_value=parse_iso("2026-03-15T12:00:00+00:00"),
+        ):
+            DAYS_LEFT = get_reauth_days_left("2026-03-10T13:00:00", 10)
 
         self.assertEqual(DAYS_LEFT, 6)
 
@@ -223,7 +245,7 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
-                with patch("app.auth_flow.save_auth_state", return_value=False):
+                with patch("app.auth_flow.persist_auth_state_transition", return_value=(STATE, False)):
                     _, _, DETAILS = attempt_auth(
                         CLIENT,
                         STATE,
@@ -235,6 +257,63 @@ class TestAuthFlow(unittest.TestCase):
                     )
 
         self.assertIn("Auth state persistence failed.", DETAILS)
+
+# --------------------------------------------------------------------------
+# This test confirms auth-state save failures do not make successful auth
+# state changes live only in memory.
+# --------------------------------------------------------------------------
+    def test_attempt_auth_keeps_existing_state_when_success_state_save_fails(self) -> None:
+        STATE = AuthState("1970-01-01T00:00:00+00:00", True, True, "prompt2")
+        CLIENT = FakeClient((True, "Signed in."), (True, "ok"))
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
+                with patch("app.auth_flow.persist_auth_state_transition", return_value=(STATE, False)):
+                    NEW_STATE, IS_AUTHENTICATED, DETAILS = attempt_auth(
+                        CLIENT,
+                        STATE,
+                        STATE_PATH,
+                        SENT_MESSAGES.append,
+                        "alice",
+                        "alice@example.com",
+                        "",
+                    )
+
+        self.assertTrue(IS_AUTHENTICATED)
+        self.assertEqual(NEW_STATE, STATE)
+        self.assertIn("Auth state persistence failed.", DETAILS)
+        self.assertIn("Authentication complete", SENT_MESSAGES[0])
+
+# --------------------------------------------------------------------------
+# This test confirms an MFA-required transition is not advertised as pending
+# when the pending state could not be persisted safely.
+# --------------------------------------------------------------------------
+    def test_attempt_auth_keeps_existing_state_when_mfa_pending_save_fails(self) -> None:
+        STATE = AuthState("1970-01-01T00:00:00+00:00", False, False, "none")
+        CLIENT = FakeClient((False, "Two-factor code is required."), (True, "ok"))
+        SENT_MESSAGES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+
+            with patch("app.auth_flow.persist_auth_state_transition", return_value=(STATE, False)):
+                NEW_STATE, IS_AUTHENTICATED, DETAILS = attempt_auth(
+                    CLIENT,
+                    STATE,
+                    STATE_PATH,
+                    SENT_MESSAGES.append,
+                    "alice",
+                    "alice@example.com",
+                    "",
+                )
+
+        self.assertFalse(IS_AUTHENTICATED)
+        self.assertEqual(NEW_STATE, STATE)
+        self.assertIn("Auth state persistence failed.", DETAILS)
+        self.assertIn("Auth state update failed", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
 # This test confirms the two-day reminder stage marks reauth pending and
@@ -337,7 +416,7 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=6):
-                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                with patch("app.auth_flow.persist_auth_state_transition") as PERSIST_TRANSITION:
                     NEW_STATE = process_reauth_reminders(
                         STATE,
                         STATE_PATH,
@@ -347,7 +426,7 @@ class TestAuthFlow(unittest.TestCase):
                     )
 
         self.assertEqual(NEW_STATE, STATE)
-        SAVE_AUTH_STATE.assert_not_called()
+        PERSIST_TRANSITION.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms the clear-state branch does not rewrite auth state when
@@ -360,7 +439,7 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=6):
-                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                with patch("app.auth_flow.persist_auth_state_transition") as PERSIST_TRANSITION:
                     NEW_STATE = process_reauth_reminders(
                         STATE,
                         STATE_PATH,
@@ -370,7 +449,7 @@ class TestAuthFlow(unittest.TestCase):
                     )
 
         self.assertEqual(NEW_STATE, STATE)
-        SAVE_AUTH_STATE.assert_not_called()
+        PERSIST_TRANSITION.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms no-op reminder paths leave state unchanged and avoid
@@ -384,7 +463,7 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=2):
-                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                with patch("app.auth_flow.persist_auth_state_transition") as PERSIST_TRANSITION:
                     NEW_STATE = process_reauth_reminders(
                         STATE,
                         STATE_PATH,
@@ -395,7 +474,7 @@ class TestAuthFlow(unittest.TestCase):
 
         self.assertEqual(NEW_STATE, STATE)
         self.assertEqual(SENT_MESSAGES, [])
-        SAVE_AUTH_STATE.assert_not_called()
+        PERSIST_TRANSITION.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms restart processing does not resend the reauth prompt when
@@ -415,7 +494,7 @@ class TestAuthFlow(unittest.TestCase):
             STATE_PATH = Path(TMPDIR) / "auth.json"
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=2):
-                with patch("app.auth_flow.save_auth_state") as SAVE_AUTH_STATE:
+                with patch("app.auth_flow.persist_auth_state_transition") as PERSIST_TRANSITION:
                     NEW_STATE = process_reauth_reminders(
                         STATE,
                         STATE_PATH,
@@ -426,7 +505,7 @@ class TestAuthFlow(unittest.TestCase):
 
         self.assertEqual(NEW_STATE, STATE)
         self.assertEqual(SENT_MESSAGES, [])
-        SAVE_AUTH_STATE.assert_not_called()
+        PERSIST_TRANSITION.assert_not_called()
 
 # --------------------------------------------------------------------------
 # This test confirms reminder notifications are not sent when the new state
@@ -441,7 +520,7 @@ class TestAuthFlow(unittest.TestCase):
 
             with patch("app.auth_flow.get_reauth_days_left", return_value=5):
                 with patch("app.auth_flow.now_iso", return_value="2026-03-15T12:00:00+00:00"):
-                    with patch("app.auth_flow.save_auth_state", return_value=False):
+                    with patch("app.auth_flow.persist_auth_state_transition", return_value=(STATE, False)):
                         NEW_STATE = process_reauth_reminders(
                             STATE,
                             STATE_PATH,

@@ -12,9 +12,10 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from app.config import AppConfig
-from app.state import AuthState, now_iso, save_auth_state
+from app.state import AuthState, now_iso, persist_auth_state_transition
 from app.telegram_bot import TelegramConfig, fetch_updates, parse_command
 from app.telegram_messages import (
+    build_auth_state_persistence_failed_message,
     build_auth_required_message,
     build_backup_requested_message,
     build_manual_reauth_message,
@@ -94,29 +95,47 @@ def handle_command(
         return CommandOutcome(AUTH_STATE, IS_AUTHENTICATED, True)
 
     if COMMAND == "auth" and not ARGS:
-        NEW_STATE = replace(AUTH_STATE, auth_pending=True)
-        DETAILS = ""
-        if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):
-            DETAILS = "Auth state persistence failed."
-        MESSAGE_SENDER(
-            build_auth_required_message(CONFIG.container_username, CONFIG.icloud_email)
+        PROPOSED_STATE = replace(AUTH_STATE, auth_pending=True)
+        NEW_STATE, PERSISTED = persist_auth_state_transition(
+            CONFIG.auth_state_path,
+            AUTH_STATE,
+            PROPOSED_STATE,
         )
+        DETAILS = "" if PERSISTED else "Auth state persistence failed."
+        if PERSISTED:
+            MESSAGE_SENDER(
+                build_auth_required_message(
+                    CONFIG.container_username,
+                    CONFIG.icloud_email,
+                ),
+            )
+        else:
+            MESSAGE_SENDER(build_auth_state_persistence_failed_message("auth"))
         return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     if COMMAND == "reauth" and not ARGS:
-        NEW_STATE = replace(
+        PROPOSED_STATE = replace(
             AUTH_STATE,
             reauth_pending=True,
             reminder_stage=AUTH_STATE.reminder_stage,
             last_reminder_utc=now_iso(),
             manual_reauth_pending=True,
         )
-        DETAILS = ""
-        if not save_auth_state(CONFIG.auth_state_path, NEW_STATE):
-            DETAILS = "Auth state persistence failed."
-        MESSAGE_SENDER(
-            build_manual_reauth_message(CONFIG.container_username, CONFIG.icloud_email)
+        NEW_STATE, PERSISTED = persist_auth_state_transition(
+            CONFIG.auth_state_path,
+            AUTH_STATE,
+            PROPOSED_STATE,
         )
+        DETAILS = "" if PERSISTED else "Auth state persistence failed."
+        if PERSISTED:
+            MESSAGE_SENDER(
+                build_manual_reauth_message(
+                    CONFIG.container_username,
+                    CONFIG.icloud_email,
+                ),
+            )
+        else:
+            MESSAGE_SENDER(build_auth_state_persistence_failed_message("reauth"))
         return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     NEW_STATE, NEW_AUTH, DETAILS = AUTH_EXECUTOR(AUTH_STATE, ARGS)
