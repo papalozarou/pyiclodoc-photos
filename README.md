@@ -1,6 +1,6 @@
 # PyiCloDoc Photos
 
-A dockerised `pyicloud` implementation for backing up iCloud drives to local storage, with Telegram used for auth prompts and operational control. It is intended to be the photo companion to  [pyiclodoc-drive](https://github.com/papalozarou/pyiclodoc-drive).
+A dockerised `pyicloud` implementation for backing up iCloud Photos to local storage, with Telegram used for auth prompts and operational control. It is intended to be the photo companion to [pyiclodoc-drive](https://github.com/papalozarou/pyiclodoc-drive).
 
 It should have all the bits you need for real-world usage, such as:
 
