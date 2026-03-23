@@ -137,6 +137,9 @@ def attempt_auth(
         )
         if not PERSISTED:
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
+            NOTIFY_MESSAGE(build_auth_state_persistence_failed_message("auth"))
+            return NEW_STATE, False, DETAILS
+
         NOTIFY_MESSAGE(build_auth_complete_message(APPLE_ID_LABEL, DETAILS))
         return NEW_STATE, True, DETAILS
 

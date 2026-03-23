@@ -32,6 +32,9 @@ Supported command forms:
    persistence succeeds. If `/config` state cannot be written, the worker sends
    an explicit auth-state update failure message instead of advertising a
    pending state that was not saved.
+8. Successful authentication is only treated as complete after the cleared auth
+   state has been persisted. If that write fails, the worker reports the
+   auth-state update failure and does not resume backup.
 
 *N.B.*
 

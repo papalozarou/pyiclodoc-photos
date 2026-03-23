@@ -282,10 +282,10 @@ class TestAuthFlow(unittest.TestCase):
                         "",
                     )
 
-        self.assertTrue(IS_AUTHENTICATED)
+        self.assertFalse(IS_AUTHENTICATED)
         self.assertEqual(NEW_STATE, STATE)
         self.assertIn("Auth state persistence failed.", DETAILS)
-        self.assertIn("Authentication complete", SENT_MESSAGES[0])
+        self.assertIn("Auth state update failed", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
 # This test confirms an MFA-required transition is not advertised as pending

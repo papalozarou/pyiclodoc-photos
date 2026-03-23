@@ -509,6 +509,39 @@ class TestRuntime(unittest.TestCase):
             self.assertTrue(RESULT_AUTH)
 
 # --------------------------------------------------------------------------
+# This test confirms one-shot auth wait does not exit early when an auth
+# command reports success in iCloud but auth-state persistence keeps auth
+# incomplete.
+# --------------------------------------------------------------------------
+    def test_wait_for_one_shot_auth_keeps_waiting_when_auth_state_did_not_persist(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CLIENT = MagicMock()
+            TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            INITIAL_STATE = AuthState("2026-03-15T10:00:00+00:00", True, False, "none")
+
+            with patch(
+                "app.runtime.process_commands",
+                side_effect=[([("auth", "123456")], 5), ([], 5)],
+            ):
+                with patch(
+                    "app.runtime.handle_command",
+                    return_value=CommandOutcome(INITIAL_STATE, False, False, "Auth state persistence failed."),
+                ):
+                    with patch("app.runtime.time.time", side_effect=[100, 100, 101, 1000]):
+                        with patch("app.runtime.time.sleep"):
+                            RESULT_STATE, RESULT_AUTH = wait_for_one_shot_auth(
+                                CONFIG,
+                                CLIENT,
+                                INITIAL_STATE,
+                                False,
+                                TELEGRAM,
+                            )
+
+            self.assertEqual(RESULT_STATE, INITIAL_STATE)
+            self.assertFalse(RESULT_AUTH)
+
+# --------------------------------------------------------------------------
 # This test confirms one-shot runtime skips with auth-required status when
 # authentication never completes.
 # --------------------------------------------------------------------------
