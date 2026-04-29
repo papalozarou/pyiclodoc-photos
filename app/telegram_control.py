@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable
 
 from app.config import AppConfig
+from app.logger import log_line
 from app.state import AuthState, now_iso, persist_auth_state_transition
 from app.telegram_bot import TelegramConfig, fetch_updates, parse_command
 from app.telegram_messages import (
@@ -39,6 +41,7 @@ class CommandOutcome:
 # 1. "TELEGRAM" is Telegram configuration.
 # 2. "USERNAME" is command prefix.
 # 3. "UPDATE_OFFSET" is update offset cursor.
+# 4. "LOG_FILE" is optional worker log destination.
 #
 # Returns: Tuple "(commands, next_offset)" for command execution.
 # ------------------------------------------------------------------------------
@@ -46,10 +49,17 @@ def process_commands(
     TELEGRAM: TelegramConfig,
     USERNAME: str,
     UPDATE_OFFSET: int | None,
+    LOG_FILE: Path | None = None,
 ) -> tuple[list[tuple[str, str]], int | None]:
-    UPDATES = fetch_updates(TELEGRAM, UPDATE_OFFSET)
+    UPDATES = fetch_updates(TELEGRAM, UPDATE_OFFSET, LOG_FILE=LOG_FILE)
 
     if not UPDATES:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Telegram command poll finished. accepted=0, next_offset={UPDATE_OFFSET}",
+            )
         return [], UPDATE_OFFSET
 
     COMMANDS: list[tuple[str, str]] = []
@@ -63,8 +73,24 @@ def process_commands(
         if EVENT is None:
             continue
 
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                "Telegram command accepted. "
+                f"command={EVENT.command}, has_args={bool(EVENT.args)}, "
+                f"update_id={EVENT.update_id}",
+            )
         COMMANDS.append((EVENT.command, EVENT.args))
 
+    if LOG_FILE is not None:
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Telegram command poll finished. "
+            f"updates={len(UPDATES)}, accepted={len(COMMANDS)}, "
+            f"next_offset={MAX_UPDATE}",
+        )
     return COMMANDS, MAX_UPDATE
 
 
@@ -78,8 +104,13 @@ def process_commands(
 # 5. "IS_AUTHENTICATED" tracks current auth validity.
 # 6. "MESSAGE_SENDER" sends one formatted Telegram message string.
 # 7. "AUTH_EXECUTOR" performs auth or reauth using an optional code.
+# 8. "DEBUG_LOGGER" emits non-secret command trace lines when supplied.
 #
 # Returns: "CommandOutcome" with updated state and backup intent.
+#
+# N.B.
+# Command arguments are not logged because auth and reauth arguments may contain
+# a one-time Apple verification code.
 # ------------------------------------------------------------------------------
 def handle_command(
     COMMAND: str,
@@ -89,9 +120,21 @@ def handle_command(
     IS_AUTHENTICATED: bool,
     MESSAGE_SENDER: Callable[[str], None],
     AUTH_EXECUTOR: Callable[[AuthState, str], tuple[AuthState, bool, str]],
+    DEBUG_LOGGER: Callable[[str], None] | None = None,
 ) -> CommandOutcome:
+    if DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Telegram command handling started. "
+            f"command={COMMAND}, has_args={bool(ARGS)}, "
+            f"is_authenticated={IS_AUTHENTICATED}, "
+            f"auth_pending={AUTH_STATE.auth_pending}, "
+            f"reauth_pending={AUTH_STATE.reauth_pending}",
+        )
+
     if COMMAND == "backup":
         MESSAGE_SENDER(build_backup_requested_message(CONFIG.icloud_email))
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER("Telegram backup command queued a manual backup.")
         return CommandOutcome(AUTH_STATE, IS_AUTHENTICATED, True)
 
     if COMMAND == "auth" and not ARGS:
@@ -111,6 +154,8 @@ def handle_command(
             )
         else:
             MESSAGE_SENDER(build_auth_state_persistence_failed_message("auth"))
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER(f"Telegram auth prompt command persisted={PERSISTED}.")
         return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
     if COMMAND == "reauth" and not ARGS:
@@ -136,7 +181,21 @@ def handle_command(
             )
         else:
             MESSAGE_SENDER(build_auth_state_persistence_failed_message("reauth"))
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER(f"Telegram reauth prompt command persisted={PERSISTED}.")
         return CommandOutcome(NEW_STATE, IS_AUTHENTICATED, False, DETAILS)
 
+    if DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Telegram auth command delegated to auth executor. "
+            f"command={COMMAND}, has_code={bool(ARGS)}",
+        )
     NEW_STATE, NEW_AUTH, DETAILS = AUTH_EXECUTOR(AUTH_STATE, ARGS)
+    if DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Telegram auth command finished. "
+            f"is_authenticated={NEW_AUTH}, "
+            f"auth_pending={NEW_STATE.auth_pending}, "
+            f"reauth_pending={NEW_STATE.reauth_pending}",
+        )
     return CommandOutcome(NEW_STATE, NEW_AUTH, False, DETAILS)

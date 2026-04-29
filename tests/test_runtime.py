@@ -485,28 +485,37 @@ class TestRuntime(unittest.TestCase):
             CONFIG = self._create_config(Path(TMPDIR))
             CLIENT = MagicMock()
             TELEGRAM = TelegramConfig(bot_token="", chat_id="")
+            LOG_FILE = Path(TMPDIR) / "worker.log"
             INITIAL_STATE = AuthState("2026-03-15T10:00:00+00:00", True, False, "none")
             FINAL_STATE = AuthState("2026-03-15T10:05:00+00:00", False, False, "none")
 
-            with patch(
-                "app.runtime.process_commands",
-                return_value=([("auth", "123456")], 5),
-            ):
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
                 with patch(
-                    "app.runtime.handle_command",
-                    return_value=CommandOutcome(FINAL_STATE, True, False, "ok"),
+                    "app.runtime.process_commands",
+                    return_value=([("auth", "123456")], 5),
                 ):
-                    with patch("app.runtime.time.sleep"):
-                        RESULT_STATE, RESULT_AUTH = wait_for_one_shot_auth(
-                            CONFIG,
-                            CLIENT,
-                            INITIAL_STATE,
-                            False,
-                            TELEGRAM,
-                        )
+                    with patch(
+                        "app.runtime.handle_command",
+                        return_value=CommandOutcome(FINAL_STATE, True, False, "ok"),
+                    ):
+                        with patch("app.runtime.time.sleep"):
+                            RESULT_STATE, RESULT_AUTH = wait_for_one_shot_auth(
+                                CONFIG,
+                                CLIENT,
+                                INITIAL_STATE,
+                                False,
+                                TELEGRAM,
+                                LOG_FILE,
+                            )
 
             self.assertEqual(RESULT_STATE, FINAL_STATE)
             self.assertTrue(RESULT_AUTH)
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertIn("One-shot auth wait started.", LOG_TEXT)
+            self.assertIn("One-shot auth poll finished. commands=1", LOG_TEXT)
+            self.assertIn("Auth command result: ok", LOG_TEXT)
+            self.assertIn("One-shot auth wait finished. reason=authenticated", LOG_TEXT)
+            self.assertNotIn("123456", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This test confirms one-shot auth wait does not exit early when an auth
@@ -710,28 +719,31 @@ class TestRuntime(unittest.TestCase):
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
             OUTCOME = CommandOutcome(AUTH_STATE, True, False, "auth ok")
 
-            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
-                with patch("app.runtime.process_commands", return_value=([("auth", "123456")], 9)):
-                    with patch("app.runtime.handle_command", return_value=OUTCOME):
-                        with patch(
-                            "app.runtime.enforce_safety_net",
-                            return_value=SafetyNetEnforcementResult(True, False),
-                        ):
-                            with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
-                                with patch("app.runtime.time.time", side_effect=[100, 100, 100]):
-                                    with self.assertRaisesRegex(RuntimeError, "stop loop"):
-                                        run_persistent_runtime(
-                                            CONFIG,
-                                            CLIENT,
-                                            AUTH_STATE,
-                                            False,
-                                            TELEGRAM,
-                                            LOG_FILE,
-                                            BUILD_DETAIL,
-                                        )
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                    with patch("app.runtime.process_commands", return_value=([("auth", "123456")], 9)):
+                        with patch("app.runtime.handle_command", return_value=OUTCOME):
+                            with patch(
+                                "app.runtime.enforce_safety_net",
+                                return_value=SafetyNetEnforcementResult(True, False),
+                            ):
+                                with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
+                                    with patch("app.runtime.time.time", side_effect=[100, 100, 100]):
+                                        with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                            run_persistent_runtime(
+                                                CONFIG,
+                                                CLIENT,
+                                                AUTH_STATE,
+                                                False,
+                                                TELEGRAM,
+                                                LOG_FILE,
+                                                BUILD_DETAIL,
+                                            )
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertIn("Auth command result: auth ok", LOG_TEXT)
+            self.assertIn("Persistent runtime poll finished. commands=1", LOG_TEXT)
+            self.assertIn("Persistent runtime schedule check.", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This test confirms the persistent runtime logs the initial and recalculated
@@ -747,29 +759,31 @@ class TestRuntime(unittest.TestCase):
             BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
 
-            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
-                with patch("app.runtime.process_commands", return_value=([], None)):
-                    with patch(
-                        "app.runtime.enforce_safety_net",
-                        return_value=SafetyNetEnforcementResult(True, False),
-                    ):
-                        with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
-                            with patch("app.runtime.get_next_run_epoch", return_value=300):
-                                with patch("app.runtime.time.time", side_effect=[100, 100]):
-                                    with self.assertRaisesRegex(RuntimeError, "stop loop"):
-                                        run_persistent_runtime(
-                                            CONFIG,
-                                            CLIENT,
-                                            AUTH_STATE,
-                                            True,
-                                            TELEGRAM,
-                                            LOG_FILE,
-                                            BUILD_DETAIL,
-                                        )
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                    with patch("app.runtime.process_commands", return_value=([], None)):
+                        with patch(
+                            "app.runtime.enforce_safety_net",
+                            return_value=SafetyNetEnforcementResult(True, False),
+                        ):
+                            with patch("app.runtime.run_backup", side_effect=RuntimeError("stop loop")):
+                                with patch("app.runtime.get_next_run_epoch", return_value=300):
+                                    with patch("app.runtime.time.time", side_effect=[100, 100]):
+                                        with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                            run_persistent_runtime(
+                                                CONFIG,
+                                                CLIENT,
+                                                AUTH_STATE,
+                                                True,
+                                                TELEGRAM,
+                                                LOG_FILE,
+                                                BUILD_DETAIL,
+                                            )
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
             self.assertIn("Next scheduled run:", LOG_TEXT)
             self.assertIn("Next scheduled run recalculated:", LOG_TEXT)
+            self.assertIn("Persistent runtime schedule check.", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This test confirms the persistent runtime skips scheduled work when auth is
@@ -784,23 +798,28 @@ class TestRuntime(unittest.TestCase):
             BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
 
-            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
-                with patch("app.runtime.process_commands", return_value=([], None)):
-                    with patch("app.runtime.notify") as NOTIFY:
-                        with patch("app.runtime.time.sleep", side_effect=RuntimeError("stop loop")):
-                            with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
-                                with self.assertRaisesRegex(RuntimeError, "stop loop"):
-                                    run_persistent_runtime(
-                                        CONFIG,
-                                        CLIENT,
-                                        AUTH_STATE,
-                                        False,
-                                        TELEGRAM,
-                                        LOG_FILE,
-                                        BUILD_DETAIL,
-                                    )
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                    with patch("app.runtime.process_commands", return_value=([], None)):
+                        with patch("app.runtime.notify") as NOTIFY:
+                            with patch("app.runtime.time.sleep", side_effect=RuntimeError("stop loop")):
+                                with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
+                                    with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                        run_persistent_runtime(
+                                            CONFIG,
+                                            CLIENT,
+                                            AUTH_STATE,
+                                            False,
+                                            TELEGRAM,
+                                            LOG_FILE,
+                                            BUILD_DETAIL,
+                                        )
 
             NOTIFY.assert_called_once()
+            self.assertIn(
+                "Backup skipped. reason=not_authenticated",
+                LOG_FILE.read_text(encoding="utf-8"),
+            )
 
 # --------------------------------------------------------------------------
 # This test confirms the persistent runtime skips scheduled work when reauth
@@ -815,23 +834,28 @@ class TestRuntime(unittest.TestCase):
             BUILD_DETAIL = {"app_build_ref": "abc123", "pyicloud_version": "2.4.1"}
             AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, True, "prompt2")
 
-            with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
-                with patch("app.runtime.process_commands", return_value=([], None)):
-                    with patch("app.runtime.notify") as NOTIFY:
-                        with patch("app.runtime.time.sleep", side_effect=RuntimeError("stop loop")):
-                            with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
-                                with self.assertRaisesRegex(RuntimeError, "stop loop"):
-                                    run_persistent_runtime(
-                                        CONFIG,
-                                        CLIENT,
-                                        AUTH_STATE,
-                                        True,
-                                        TELEGRAM,
-                                        LOG_FILE,
-                                        BUILD_DETAIL,
-                                    )
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.runtime.process_reauth_reminders", return_value=AUTH_STATE):
+                    with patch("app.runtime.process_commands", return_value=([], None)):
+                        with patch("app.runtime.notify") as NOTIFY:
+                            with patch("app.runtime.time.sleep", side_effect=RuntimeError("stop loop")):
+                                with patch("app.runtime.time.time", side_effect=[100, 100, 101]):
+                                    with self.assertRaisesRegex(RuntimeError, "stop loop"):
+                                        run_persistent_runtime(
+                                            CONFIG,
+                                            CLIENT,
+                                            AUTH_STATE,
+                                            True,
+                                            TELEGRAM,
+                                            LOG_FILE,
+                                            BUILD_DETAIL,
+                                        )
 
             NOTIFY.assert_called_once()
+            self.assertIn(
+                "Backup skipped. reason=reauth_pending",
+                LOG_FILE.read_text(encoding="utf-8"),
+            )
 
 # --------------------------------------------------------------------------
 # This test confirms a manual backup request is consumed after one skipped

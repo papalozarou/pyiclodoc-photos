@@ -100,8 +100,13 @@ def persist_reauth_transition(
 # 5. "USERNAME" is command prefix used by Telegram control.
 # 6. "APPLE_ID" is the configured Apple account identifier.
 # 7. "PROVIDED_CODE" is optional MFA code.
+# 8. "DEBUG_LOGGER" emits non-secret auth trace lines when supplied.
 #
 # Returns: Tuple "(new_state, is_authenticated, details_message)".
+#
+# N.B.
+# The provided MFA code is never logged. Debug output records only whether a
+# code was supplied so troubleshooting cannot leak one-time credentials.
 # ------------------------------------------------------------------------------
 def attempt_auth(
     CLIENT: ICloudDriveClient,
@@ -111,15 +116,32 @@ def attempt_auth(
     USERNAME: str,
     APPLE_ID: str,
     PROVIDED_CODE: str,
+    DEBUG_LOGGER: Callable[[str], None] | None = None,
     ) -> tuple[AuthState, bool, str]:
     PERSISTENCE_WARNING = " Auth state persistence failed."
     CODE = PROVIDED_CODE.strip()
     APPLE_ID_LABEL = format_apple_id_label(APPLE_ID)
+    AUTH_MODE = "complete_2fa" if CODE else "start_session"
+
+    if DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Auth attempt started. "
+            f"mode={AUTH_MODE}, has_code={bool(CODE)}, "
+            f"auth_pending={AUTH_STATE.auth_pending}, "
+            f"reauth_pending={AUTH_STATE.reauth_pending}, "
+            f"manual_reauth_pending={AUTH_STATE.manual_reauth_pending}",
+        )
 
     if CODE:
         IS_SUCCESS, DETAILS = CLIENT.complete_authentication(CODE)
     else:
         IS_SUCCESS, DETAILS = CLIENT.start_authentication()
+
+    if DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Auth client call finished. "
+            f"mode={AUTH_MODE}, success={IS_SUCCESS}, details={DETAILS}",
+        )
 
     if IS_SUCCESS:
         PROPOSED_STATE = AuthState(
@@ -137,9 +159,13 @@ def attempt_auth(
         )
         if not PERSISTED:
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
+            if DEBUG_LOGGER is not None:
+                DEBUG_LOGGER("Auth state persistence failed after successful auth.")
             NOTIFY_MESSAGE(build_auth_state_persistence_failed_message("auth"))
             return NEW_STATE, False, DETAILS
 
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER("Auth state persisted after successful auth.")
         NOTIFY_MESSAGE(build_auth_complete_message(APPLE_ID_LABEL, DETAILS))
         return NEW_STATE, True, DETAILS
 
@@ -152,9 +178,13 @@ def attempt_auth(
         )
         if not PERSISTED:
             DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
+            if DEBUG_LOGGER is not None:
+                DEBUG_LOGGER("Auth pending state persistence failed.")
             NOTIFY_MESSAGE(build_auth_state_persistence_failed_message("auth"))
             return NEW_STATE, False, DETAILS
 
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER("Auth pending state persisted; waiting for 2FA code.")
         NOTIFY_MESSAGE(build_auth_required_message(USERNAME, APPLE_ID_LABEL))
         return NEW_STATE, False, DETAILS
 
@@ -169,6 +199,15 @@ def attempt_auth(
     )
     if not PERSISTED:
         DETAILS = f"{DETAILS}{PERSISTENCE_WARNING}"
+        if DEBUG_LOGGER is not None:
+            DEBUG_LOGGER("Auth failure state persistence failed.")
+    elif DEBUG_LOGGER is not None:
+        DEBUG_LOGGER(
+            "Auth failure state persisted. "
+            f"auth_pending={NEW_STATE.auth_pending}, "
+            f"reauth_pending={NEW_STATE.reauth_pending}",
+        )
+
     NOTIFY_MESSAGE(build_auth_failed_message(APPLE_ID_LABEL, DETAILS))
     return NEW_STATE, False, DETAILS
 

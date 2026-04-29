@@ -99,6 +99,37 @@ class TestTelegramControl(unittest.TestCase):
         self.assertEqual(NEXT_OFFSET, 8)
 
 # --------------------------------------------------------------------------
+# This test confirms command polling debug logs command metadata without
+# writing command arguments.
+# --------------------------------------------------------------------------
+    def test_process_commands_logs_sanitised_command_metadata(self) -> None:
+        TELEGRAM = TelegramConfig(bot_token="token", chat_id="1")
+        UPDATES = [
+            {
+                "update_id": 4,
+                "message": {
+                    "chat": {"id": "1"},
+                    "text": "alice auth 123456",
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.telegram_control.fetch_updates", return_value=UPDATES):
+                    COMMANDS, NEXT_OFFSET = process_commands(TELEGRAM, "alice", None, LOG_FILE)
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+
+        self.assertEqual(COMMANDS, [("auth", "123456")])
+        self.assertEqual(NEXT_OFFSET, 5)
+        self.assertIn("Telegram command accepted. command=auth, has_args=True", LOG_TEXT)
+        self.assertIn("Telegram command poll finished. updates=1, accepted=1", LOG_TEXT)
+        self.assertNotIn("123456", LOG_TEXT)
+
+# --------------------------------------------------------------------------
 # This test confirms a backup command returns backup intent and sends the
 # request message.
 # --------------------------------------------------------------------------

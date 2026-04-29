@@ -48,11 +48,16 @@ class SafetyNetEnforcementResult:
 #
 # 1. "TELEGRAM" is Telegram integration configuration.
 # 2. "MESSAGE" is outgoing message content.
+# 3. "LOG_FILE" is optional worker log destination.
 #
 # Returns: None.
 # ------------------------------------------------------------------------------
-def notify(TELEGRAM: TelegramConfig, MESSAGE: str) -> None:
-    send_message(TELEGRAM, MESSAGE)
+def notify(
+    TELEGRAM: TelegramConfig,
+    MESSAGE: str,
+    LOG_FILE: Path | None = None,
+) -> None:
+    send_message(TELEGRAM, MESSAGE, LOG_FILE=LOG_FILE)
 
 
 # ------------------------------------------------------------------------------
@@ -244,9 +249,26 @@ def enforce_safety_net(
     BLOCKED_MARKER = CONFIG.config_dir / "pyiclodoc-photos-safety_net_blocked.flag"
 
     if DONE_MARKER.exists():
+        log_line(LOG_FILE, "debug", "Safety net skipped. reason=done_marker_exists")
         return SafetyNetEnforcementResult(True, False)
 
+    log_line(
+        LOG_FILE,
+        "debug",
+        "Safety net started. "
+        f"sample_size={CONFIG.safety_net_sample_size}, "
+        f"blocked_marker_exists={BLOCKED_MARKER.exists()}",
+    )
     RESULT = run_first_time_safety_net(CONFIG.output_dir, CONFIG.safety_net_sample_size)
+    log_line(
+        LOG_FILE,
+        "debug",
+        "Safety net sample finished. "
+        f"should_block={RESULT.should_block}, "
+        f"mismatches={len(RESULT.mismatched_samples)}, "
+        f"expected_uid={RESULT.expected_uid}, "
+        f"expected_gid={RESULT.expected_gid}",
+    )
 
     if not RESULT.should_block and not clear_safety_net_marker(
         BLOCKED_MARKER,
@@ -256,6 +278,7 @@ def enforce_safety_net(
         return SafetyNetEnforcementResult(False, False)
 
     if not RESULT.should_block:
+        log_line(LOG_FILE, "debug", "Safety net passed; persisting done marker.")
         if not write_safety_net_marker(
             DONE_MARKER,
             "ok\n",
@@ -268,6 +291,7 @@ def enforce_safety_net(
         return SafetyNetEnforcementResult(True, False)
 
     if BLOCKED_MARKER.exists():
+        log_line(LOG_FILE, "debug", "Safety net remains blocked from previous marker.")
         return SafetyNetEnforcementResult(False, True)
 
     MISMATCH_TEXT = "\n".join(RESULT.mismatched_samples)
@@ -283,6 +307,7 @@ def enforce_safety_net(
             RESULT.expected_gid,
             SAMPLE_TEXT,
         ),
+        LOG_FILE,
     )
     if not write_safety_net_marker(
         BLOCKED_MARKER,
@@ -321,13 +346,14 @@ def run_backup(
     TRIGGER: str,
     BUILD_DETAIL: dict[str, str],
 ) -> None:
+    log_line(LOG_FILE, "debug", f"Backup run started. trigger={TRIGGER}")
     log_effective_backup_settings(CONFIG, LOG_FILE, BUILD_DETAIL)
     MANIFEST = load_manifest(CONFIG.manifest_path)
     log_line(LOG_FILE, "debug", f"Loaded manifest entries: {len(MANIFEST)}")
     APPLE_ID_LABEL = format_apple_id_label(CONFIG.icloud_email)
     RUN_START_EPOCH = int(time.time())
     SCHEDULE_LINE = format_schedule_line(CONFIG, TRIGGER)
-    notify(TELEGRAM, build_backup_started_message(APPLE_ID_LABEL, SCHEDULE_LINE))
+    notify(TELEGRAM, build_backup_started_message(APPLE_ID_LABEL, SCHEDULE_LINE), LOG_FILE)
 
     SUMMARY, NEW_MANIFEST = perform_incremental_sync(
         CLIENT,
@@ -365,6 +391,7 @@ def run_backup(
         f"delta={len(NEW_MANIFEST) - len(MANIFEST)}",
     )
     MANIFEST_SAVED = save_manifest(CONFIG.manifest_path, NEW_MANIFEST)
+    log_line(LOG_FILE, "debug", f"Manifest save finished. success={MANIFEST_SAVED}")
 
     DURATION_SECONDS = int(time.time()) - RUN_START_EPOCH
     AVERAGE_SPEED = format_average_speed(SUMMARY.transferred_bytes, DURATION_SECONDS)
@@ -395,7 +422,7 @@ def run_backup(
         )
 
     COMPLETION_MESSAGE = build_backup_complete_message(APPLE_ID_LABEL, STATUS_LINES)
-    notify(TELEGRAM, COMPLETION_MESSAGE)
+    notify(TELEGRAM, COMPLETION_MESSAGE, LOG_FILE)
     log_line(
         LOG_FILE,
         "info",
@@ -413,6 +440,7 @@ def run_backup(
 # 3. "AUTH_STATE" is current auth state.
 # 4. "IS_AUTHENTICATED" tracks current auth validity.
 # 5. "TELEGRAM" is Telegram integration configuration.
+# 6. "LOG_FILE" is optional worker log destination.
 #
 # Returns: Tuple "(auth_state, is_authenticated)".
 # ------------------------------------------------------------------------------
@@ -422,25 +450,57 @@ def wait_for_one_shot_auth(
     AUTH_STATE: AuthState,
     IS_AUTHENTICATED: bool,
     TELEGRAM: TelegramConfig,
+    LOG_FILE: Path | None = None,
 ) -> tuple[AuthState, bool]:
     START_EPOCH = int(time.time())
     UPDATE_OFFSET: int | None = None
 
+    if LOG_FILE is not None:
+        log_line(
+            LOG_FILE,
+            "debug",
+            "One-shot auth wait started. "
+            f"timeout_seconds={RUN_ONCE_AUTH_WAIT_SECONDS}, "
+            f"poll_seconds={RUN_ONCE_AUTH_POLL_SECONDS}, "
+            f"is_authenticated={IS_AUTHENTICATED}, "
+            f"reauth_pending={AUTH_STATE.reauth_pending}",
+        )
+
     while True:
         if IS_AUTHENTICATED and not AUTH_STATE.reauth_pending:
+            if LOG_FILE is not None:
+                log_line(LOG_FILE, "debug", "One-shot auth wait finished. reason=authenticated")
             return AUTH_STATE, IS_AUTHENTICATED
 
         NOW_EPOCH = int(time.time())
         ELAPSED_SECONDS = NOW_EPOCH - START_EPOCH
 
         if ELAPSED_SECONDS >= RUN_ONCE_AUTH_WAIT_SECONDS:
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    "One-shot auth wait finished. "
+                    f"reason=timeout, elapsed_seconds={ELAPSED_SECONDS}, "
+                    f"is_authenticated={IS_AUTHENTICATED}, "
+                    f"reauth_pending={AUTH_STATE.reauth_pending}",
+                )
             return AUTH_STATE, IS_AUTHENTICATED
 
         COMMANDS, UPDATE_OFFSET = process_commands(
             TELEGRAM,
             CONFIG.container_username,
             UPDATE_OFFSET,
+            LOG_FILE,
         )
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                "One-shot auth poll finished. "
+                f"commands={len(COMMANDS)}, next_offset={UPDATE_OFFSET}, "
+                f"elapsed_seconds={ELAPSED_SECONDS}",
+            )
 
         for COMMAND, ARGS in COMMANDS:
             OUTCOME = handle_command(
@@ -449,19 +509,31 @@ def wait_for_one_shot_auth(
                 CONFIG,
                 AUTH_STATE,
                 IS_AUTHENTICATED,
-                lambda MESSAGE: notify(TELEGRAM, MESSAGE),
+                lambda MESSAGE: notify(TELEGRAM, MESSAGE, LOG_FILE),
                 lambda CURRENT_STATE, PROVIDED_CODE: attempt_auth(
                     CLIENT,
                     CURRENT_STATE,
                     CONFIG.auth_state_path,
-                    lambda MESSAGE: notify(TELEGRAM, MESSAGE),
+                    lambda MESSAGE: notify(TELEGRAM, MESSAGE, LOG_FILE),
                     CONFIG.container_username,
                     CONFIG.icloud_email,
                     PROVIDED_CODE,
+                    (
+                        None
+                        if LOG_FILE is None
+                        else lambda MESSAGE: log_line(LOG_FILE, "debug", MESSAGE)
+                    ),
+                ),
+                (
+                    None
+                    if LOG_FILE is None
+                    else lambda MESSAGE: log_line(LOG_FILE, "debug", MESSAGE)
                 ),
             )
             AUTH_STATE = OUTCOME.auth_state
             IS_AUTHENTICATED = OUTCOME.is_authenticated
+            if LOG_FILE is not None and OUTCOME.details:
+                log_line(LOG_FILE, "info", f"Auth command result: {OUTCOME.details}")
 
         time.sleep(RUN_ONCE_AUTH_POLL_SECONDS)
 
@@ -505,6 +577,7 @@ def run_one_shot_runtime(
             AUTH_STATE,
             IS_AUTHENTICATED,
             TELEGRAM,
+            LOG_FILE,
         )
 
     if not IS_AUTHENTICATED:
@@ -576,6 +649,16 @@ def run_persistent_runtime(
             TELEGRAM,
             CONFIG.container_username,
             NEXT_UPDATE_OFFSET,
+            LOG_FILE,
+        )
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Persistent runtime poll finished. "
+            f"commands={len(COMMANDS)}, next_offset={NEXT_UPDATE_OFFSET}, "
+            f"is_authenticated={IS_AUTHENTICATED}, "
+            f"auth_pending={AUTH_STATE.auth_pending}, "
+            f"reauth_pending={AUTH_STATE.reauth_pending}",
         )
 
         for COMMAND, ARGS in COMMANDS:
@@ -585,16 +668,18 @@ def run_persistent_runtime(
                 CONFIG,
                 AUTH_STATE,
                 IS_AUTHENTICATED,
-                lambda MESSAGE: notify(TELEGRAM, MESSAGE),
+                lambda MESSAGE: notify(TELEGRAM, MESSAGE, LOG_FILE),
                 lambda CURRENT_STATE, PROVIDED_CODE: attempt_auth(
                     CLIENT,
                     CURRENT_STATE,
                     CONFIG.auth_state_path,
-                    lambda MESSAGE: notify(TELEGRAM, MESSAGE),
+                    lambda MESSAGE: notify(TELEGRAM, MESSAGE, LOG_FILE),
                     CONFIG.container_username,
                     CONFIG.icloud_email,
                     PROVIDED_CODE,
+                    lambda MESSAGE: log_line(LOG_FILE, "debug", MESSAGE),
                 ),
+                lambda MESSAGE: log_line(LOG_FILE, "debug", MESSAGE),
             )
             AUTH_STATE = OUTCOME.auth_state
             IS_AUTHENTICATED = OUTCOME.is_authenticated
@@ -604,8 +689,16 @@ def run_persistent_runtime(
 
         NOW_EPOCH = int(time.time())
         SCHEDULE_DUE = NOW_EPOCH >= NEXT_RUN_EPOCH
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Persistent runtime schedule check. "
+            f"now_epoch={NOW_EPOCH}, next_run_epoch={NEXT_RUN_EPOCH}, "
+            f"schedule_due={SCHEDULE_DUE}, backup_requested={BACKUP_REQUESTED}",
+        )
 
         if not SCHEDULE_DUE and not BACKUP_REQUESTED:
+            log_line(LOG_FILE, "debug", "Persistent runtime sleeping. reason=not_due")
             time.sleep(5)
             continue
 
@@ -622,17 +715,21 @@ def run_persistent_runtime(
         )
 
         if not IS_AUTHENTICATED:
+            log_line(LOG_FILE, "debug", "Backup skipped. reason=not_authenticated")
             notify(
                 TELEGRAM,
                 build_backup_skipped_auth_message(format_apple_id_label(CONFIG.icloud_email)),
+                LOG_FILE,
             )
             time.sleep(5)
             continue
 
         if AUTH_STATE.reauth_pending:
+            log_line(LOG_FILE, "debug", "Backup skipped. reason=reauth_pending")
             notify(
                 TELEGRAM,
                 build_backup_skipped_reauth_message(format_apple_id_label(CONFIG.icloud_email)),
+                LOG_FILE,
             )
             time.sleep(5)
             continue
@@ -642,6 +739,7 @@ def run_persistent_runtime(
             if not SAFETY_NET_RESULT.should_retry:
                 raise RuntimeError("Safety-net state persistence failed.")
 
+            log_line(LOG_FILE, "debug", "Persistent runtime sleeping. reason=safety_net_retry")
             time.sleep(30)
             continue
 

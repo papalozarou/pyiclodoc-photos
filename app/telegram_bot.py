@@ -6,8 +6,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import requests
+from pathlib import Path
 from typing import Any
+
+import requests
+
+from app.logger import log_line
 
 
 # ------------------------------------------------------------------------------
@@ -47,6 +51,7 @@ def get_endpoint(TOKEN: str, METHOD: str) -> str:
 # 1. "CONFIG" carries token and chat configuration.
 # 2. "TEXT" is message body.
 # 3. "TIMEOUT" is request timeout in seconds.
+# 4. "LOG_FILE" is optional worker log destination.
 #
 # Returns: True on successful HTTP/API response, otherwise False.
 #
@@ -57,11 +62,20 @@ def get_endpoint(TOKEN: str, METHOD: str) -> str:
 # Notes: Telegram Bot API reference:
 # https://core.telegram.org/bots/api#sendmessage
 # ------------------------------------------------------------------------------
-def send_message(CONFIG: TelegramConfig, TEXT: str, TIMEOUT: int = 20) -> bool:
+def send_message(
+    CONFIG: TelegramConfig,
+    TEXT: str,
+    TIMEOUT: int = 20,
+    LOG_FILE: Path | None = None,
+) -> bool:
     if not CONFIG.bot_token:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram send skipped. reason=missing_bot_token")
         return False
 
     if not CONFIG.chat_id:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram send skipped. reason=missing_chat_id")
         return False
 
     PAYLOAD = {
@@ -70,13 +84,27 @@ def send_message(CONFIG: TelegramConfig, TEXT: str, TIMEOUT: int = 20) -> bool:
     }
 
     try:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram send started.")
         RESPONSE = requests.post(
             get_endpoint(CONFIG.bot_token, "sendMessage"),
             json=PAYLOAD,
             timeout=TIMEOUT,
         )
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Telegram send finished. ok={RESPONSE.ok}, status_code={RESPONSE.status_code}",
+            )
         return RESPONSE.ok
-    except requests.RequestException:
+    except requests.RequestException as ERROR:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Telegram send failed. error_type={type(ERROR).__name__}",
+            )
         return False
 
 
@@ -86,6 +114,7 @@ def send_message(CONFIG: TelegramConfig, TEXT: str, TIMEOUT: int = 20) -> bool:
 # 1. "CONFIG" carries token and chat configuration.
 # 2. "OFFSET" is update offset.
 # 3. "TIMEOUT" is long-poll timeout in seconds.
+# 4. "LOG_FILE" is optional worker log destination.
 #
 # Returns: List of update dictionaries from Telegram, or empty list on errors.
 #
@@ -100,8 +129,11 @@ def fetch_updates(
     CONFIG: TelegramConfig,
     OFFSET: int | None,
     TIMEOUT: int = 30,
+    LOG_FILE: Path | None = None,
 ) -> list[dict[str, Any]]:
     if not CONFIG.bot_token:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram poll skipped. reason=missing_bot_token")
         return []
 
     PARAMS: dict[str, Any] = {"timeout": TIMEOUT}
@@ -110,27 +142,52 @@ def fetch_updates(
         PARAMS["offset"] = OFFSET
 
     try:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", f"Telegram poll started. offset={OFFSET}")
         RESPONSE = requests.get(
             get_endpoint(CONFIG.bot_token, "getUpdates"),
             params=PARAMS,
             timeout=TIMEOUT + 5,
         )
-    except requests.RequestException:
+    except requests.RequestException as ERROR:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Telegram poll failed. error_type={type(ERROR).__name__}",
+            )
         return []
 
     if not RESPONSE.ok:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Telegram poll failed. status_code={RESPONSE.status_code}",
+            )
         return []
 
     try:
         PAYLOAD = RESPONSE.json()
     except ValueError:
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram poll failed. reason=invalid_json")
         return []
 
     if not PAYLOAD.get("ok"):
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram poll failed. reason=api_not_ok")
         return []
 
     RESULT = PAYLOAD.get("result", [])
-    return RESULT if isinstance(RESULT, list) else []
+    if not isinstance(RESULT, list):
+        if LOG_FILE is not None:
+            log_line(LOG_FILE, "debug", "Telegram poll failed. reason=result_not_list")
+        return []
+
+    if LOG_FILE is not None:
+        log_line(LOG_FILE, "debug", f"Telegram poll finished. updates={len(RESULT)}")
+    return RESULT
 
 
 # ------------------------------------------------------------------------------

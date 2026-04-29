@@ -136,8 +136,9 @@ and deleting files under `albums/`. Existing album output is left untouched.
 ## Logging
 
 - `C_LOG_LEVEL=info`: stage-level worker messages.
-- `C_LOG_LEVEL=debug`: stage-level messages plus transfer planning detail,
-  album-view refreshes, delete detail, and more verbose sync diagnostics.
+- `C_LOG_LEVEL=debug`: stage-level messages plus non-secret runtime decisions,
+  Telegram poll outcomes, auth wait state, safety-net decisions, transfer
+  retry handling, album-view refreshes, delete detail, and sync diagnostics.
 - `C_LOG_LEVEL=error`: only error lines.
 
 ## Default container paths

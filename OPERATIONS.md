@@ -13,6 +13,9 @@
   privilege drop works.
 - Set `LOG_LEVEL=debug` in Compose `default-env` for verbose runtime
   diagnostics.
+- Debug logs include control-flow decisions such as why the worker is waiting,
+  skipping, retrying, or polling Telegram. They do not include passwords,
+  Telegram message text, bot tokens, or Apple two-factor codes.
 - At `LOG_LEVEL=info`, worker logs still include stage boundary markers so run
   progress remains visible.
 - Error lines are coloured red in container stdout; file logs remain plain

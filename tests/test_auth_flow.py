@@ -147,6 +147,35 @@ class TestAuthFlow(unittest.TestCase):
         self.assertIn("Authentication required", SENT_MESSAGES[0])
 
 # --------------------------------------------------------------------------
+# This test confirms auth debug logging records control flow without writing
+# the supplied one-time 2FA code.
+# --------------------------------------------------------------------------
+    def test_attempt_auth_debug_logging_hides_two_factor_code(self) -> None:
+        STATE = AuthState("1970-01-01T00:00:00+00:00", True, False, "none")
+        CLIENT = FakeClient((False, "unused"), (True, "Authenticated."))
+        SENT_MESSAGES: list[str] = []
+        DEBUG_LINES: list[str] = []
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            STATE_PATH = Path(TMPDIR) / "auth.json"
+            attempt_auth(
+                CLIENT,
+                STATE,
+                STATE_PATH,
+                SENT_MESSAGES.append,
+                "alice",
+                "alice@example.com",
+                "123456",
+                DEBUG_LINES.append,
+            )
+
+        DEBUG_TEXT = "\n".join(DEBUG_LINES)
+        self.assertIn("mode=complete_2fa", DEBUG_TEXT)
+        self.assertIn("has_code=True", DEBUG_TEXT)
+        self.assertIn("Auth state persisted after successful auth.", DEBUG_TEXT)
+        self.assertNotIn("123456", DEBUG_TEXT)
+
+# --------------------------------------------------------------------------
 # This test confirms a generic auth failure does not enter MFA-pending state
 # and emits the failure message.
 # --------------------------------------------------------------------------

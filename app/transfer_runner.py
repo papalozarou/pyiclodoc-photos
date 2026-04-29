@@ -120,6 +120,7 @@ def should_retry_transfer(FAILURE_REASON: str) -> bool:
 # 1. "CLIENT" is the active iCloud API wrapper.
 # 2. "OUTPUT_DIR" is local backup root.
 # 3. "ENTRY" is the remote photo metadata record.
+# 4. "LOG_FILE" is optional worker log destination.
 #
 # Returns: Final "DownloadResult" after success or the last failed attempt.
 # ------------------------------------------------------------------------------
@@ -127,21 +128,56 @@ def transfer_with_retry(
     CLIENT: ICloudDriveClient,
     OUTPUT_DIR: Path,
     ENTRY: RemoteEntry,
+    LOG_FILE: Path | None = None,
 ) -> DownloadResult:
     LAST_RESULT = DownloadResult(False, failure_reason="unknown_error")
 
     for ATTEMPT in range(1, TRANSFER_MAX_ATTEMPTS + 1):
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                f"Transfer attempt started: {ENTRY.path} attempt={ATTEMPT}",
+            )
         LAST_RESULT = transfer_if_required(CLIENT, OUTPUT_DIR, ENTRY)
 
         if LAST_RESULT.success:
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    f"Transfer attempt succeeded: {ENTRY.path} attempt={ATTEMPT}",
+                )
             return LAST_RESULT
 
         if ATTEMPT >= TRANSFER_MAX_ATTEMPTS:
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    "Transfer attempts exhausted: "
+                    f"{ENTRY.path} reason={LAST_RESULT.failure_reason}",
+                )
             return LAST_RESULT
 
         if not should_retry_transfer(LAST_RESULT.failure_reason):
+            if LOG_FILE is not None:
+                log_line(
+                    LOG_FILE,
+                    "debug",
+                    "Transfer retry skipped: "
+                    f"{ENTRY.path} reason={LAST_RESULT.failure_reason}",
+                )
             return LAST_RESULT
 
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "debug",
+                "Transfer retry scheduled: "
+                f"{ENTRY.path} attempt={ATTEMPT + 1}, "
+                f"reason={LAST_RESULT.failure_reason}",
+            )
         time.sleep(TRANSFER_RETRY_DELAY_SECONDS * ATTEMPT)
 
     return LAST_RESULT
@@ -186,7 +222,8 @@ def record_failed_transfer(
 # 5. "LOG_FILE" is optional log file path.
 # 6. "WORKER_COUNT" is the bounded transfer pool size.
 #
-# Returns: Tuple "(transferred, transferred_bytes, errors, failure_reason_counts)".
+# Returns: Tuple with transferred count, byte count, error count, and failure
+# reason counts.
 #
 # N.B.
 # Transfer workers only touch canonical file paths. Album views are rebuilt in
@@ -209,7 +246,7 @@ def run_transfers(
 
     with ThreadPoolExecutor(max_workers=WORKER_COUNT) as EXECUTOR:
         FUTURES = {
-            EXECUTOR.submit(transfer_with_retry, CLIENT, OUTPUT_DIR, ENTRY): ENTRY
+            EXECUTOR.submit(transfer_with_retry, CLIENT, OUTPUT_DIR, ENTRY, LOG_FILE): ENTRY
             for ENTRY in TRANSFER_CANDIDATES
         }
         PENDING = set(FUTURES.keys())

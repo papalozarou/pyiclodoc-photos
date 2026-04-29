@@ -164,14 +164,22 @@ def main() -> int:
 
         CLIENT = ICloudDriveClient(CONFIG)
         AUTH_STATE = load_auth_state(CONFIG.auth_state_path)
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Startup auth attempt beginning. "
+            f"auth_pending={AUTH_STATE.auth_pending}, "
+            f"reauth_pending={AUTH_STATE.reauth_pending}",
+        )
         AUTH_STATE, IS_AUTHENTICATED, DETAILS = attempt_auth(
             CLIENT,
             AUTH_STATE,
             CONFIG.auth_state_path,
-            lambda MESSAGE: notify(TELEGRAM, MESSAGE),
+            lambda MESSAGE: notify(TELEGRAM, MESSAGE, LOG_FILE),
             CONFIG.container_username,
             CONFIG.icloud_email,
             "",
+            lambda MESSAGE: log_line(LOG_FILE, "debug", MESSAGE),
         )
         log_line(LOG_FILE, "info", DETAILS)
         log_line(

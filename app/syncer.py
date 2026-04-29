@@ -208,6 +208,15 @@ def perform_incremental_sync(
 ) -> tuple[SyncResult, dict[str, dict[str, Any]]]:
     if LOG_FILE is not None:
         log_line(LOG_FILE, "info", "Remote photo listing started.")
+        log_line(
+            LOG_FILE,
+            "debug",
+            "Sync configuration detail: "
+            f"delete_removed={BACKUP_DELETE_REMOVED}, "
+            f"albums_enabled={BACKUP_ALBUMS_ENABLED}, "
+            f"album_links_mode={BACKUP_ALBUM_LINKS_MODE}, "
+            f"root_albums={BACKUP_ROOT_ALBUMS}",
+        )
 
     ENTRIES = CLIENT.list_entries_for_sync(MANIFEST)
     FILES = [ENTRY for ENTRY in ENTRIES if not ENTRY.is_dir]
@@ -269,6 +278,8 @@ def perform_incremental_sync(
 
     if LOG_FILE is not None and BACKUP_ALBUMS_ENABLED:
         log_line(LOG_FILE, "info", "Album reconciliation started.")
+    elif LOG_FILE is not None:
+        log_line(LOG_FILE, "debug", "Album reconciliation skipped. reason=disabled")
 
     ALBUM_RESULT = None
     DERIVED_ERRORS = 0
@@ -321,6 +332,8 @@ def perform_incremental_sync(
                 f"deleted_directories={DELETED_DIRECTORIES}, "
                 f"errors={DELETE_ERRORS}.",
             )
+    elif LOG_FILE is not None:
+        log_line(LOG_FILE, "debug", "Delete phase skipped. reason=disabled")
 
     if LOG_FILE is not None:
         log_line(

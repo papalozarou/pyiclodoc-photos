@@ -261,11 +261,19 @@ class TestSyncer(unittest.TestCase):
         CLIENT = FlakyClient([ENTRY], "timeout")
 
         with tempfile.TemporaryDirectory() as TMPDIR:
-            with patch("app.transfer_runner.time.sleep"):
-                RESULT = transfer_with_retry(CLIENT, Path(TMPDIR), ENTRY)
+            TMPDIR_PATH = Path(TMPDIR)
+            LOG_FILE = TMPDIR_PATH / "worker.log"
+
+            with patch.dict("os.environ", {"LOG_LEVEL": "debug"}, clear=False):
+                with patch("app.transfer_runner.time.sleep"):
+                    RESULT = transfer_with_retry(CLIENT, TMPDIR_PATH, ENTRY, LOG_FILE)
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
 
         self.assertTrue(RESULT.success)
         self.assertEqual(CLIENT.download_calls, [ENTRY.path, ENTRY.path])
+        self.assertIn("Transfer attempt started: library/2026/03/14/IMG_0001.JPG attempt=1", LOG_TEXT)
+        self.assertIn("Transfer retry scheduled: library/2026/03/14/IMG_0001.JPG", LOG_TEXT)
+        self.assertIn("Transfer attempt succeeded: library/2026/03/14/IMG_0001.JPG attempt=2", LOG_TEXT)
 
 # --------------------------------------------------------------------------
 # This test confirms the first-run safety net passes cleanly when no files
@@ -427,6 +435,7 @@ class TestSyncer(unittest.TestCase):
             )
 
             LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertIn("Sync configuration detail: delete_removed=True", LOG_TEXT)
             self.assertIn("Remote listing detail: entries=1, files=1", LOG_TEXT)
             self.assertIn("Photo queued for transfer: library/2026/03/14/IMG_0001.JPG", LOG_TEXT)
             self.assertIn("Transfer execution detail: workers=", LOG_TEXT)
