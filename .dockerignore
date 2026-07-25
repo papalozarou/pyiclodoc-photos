@@ -8,6 +8,7 @@
 #
 # Add project-specific patterns in this section.
 # ------------------------------------------------------------------------------
+.context/
 .github/copilot-instructions.md
 .git/
 .gitignore
