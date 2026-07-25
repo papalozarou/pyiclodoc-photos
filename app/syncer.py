@@ -218,7 +218,25 @@ def perform_incremental_sync(
             f"root_albums={BACKUP_ROOT_ALBUMS}",
         )
 
-    ENTRIES = CLIENT.list_entries_for_sync(MANIFEST)
+    try:
+        ENTRIES = CLIENT.list_entries_for_sync(MANIFEST)
+    except Exception as LISTING_EXCEPTION:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "error",
+                f"Remote photo listing failed: {LISTING_EXCEPTION}. "
+                "Skipping this run's transfer, album, and delete phases.",
+            )
+
+        return SyncResult(
+            total_files=0,
+            transferred_files=0,
+            transferred_bytes=0,
+            skipped_files=0,
+            error_files=1,
+        ), MANIFEST
+
     FILES = [ENTRY for ENTRY in ENTRIES if not ENTRY.is_dir]
 
     if LOG_FILE is not None:

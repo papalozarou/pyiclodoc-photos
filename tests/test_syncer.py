@@ -106,6 +106,15 @@ class ExplodingClient(FakeClient):
 
 
 # ------------------------------------------------------------------------------
+# This class raises from the remote listing call to exercise the unguarded
+# listing crash path.
+# ------------------------------------------------------------------------------
+class ListingFailureClient(FakeClient):
+    def list_entries_for_sync(self, MANIFEST: dict[str, dict[str, object]]) -> list[RemoteEntry]:
+        raise ConnectionError("iCloud listing timed out")
+
+
+# ------------------------------------------------------------------------------
 # This class fails once with a transient reason and then succeeds on retry.
 # ------------------------------------------------------------------------------
 class FlakyClient(FakeClient):
@@ -756,6 +765,74 @@ class TestSyncer(unittest.TestCase):
                 "Transfer failure reason detail: worker_exception:RuntimeError=1",
                 LOG_TEXT,
             )
+
+# --------------------------------------------------------------------------
+# This test confirms a remote listing exception does not propagate out of
+# "perform_incremental_sync" and leaves the manifest untouched.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_survives_listing_failure(self) -> None:
+        CLIENT = ListingFailureClient([])
+        PREVIOUS_MANIFEST = {"library/2026/03/14/IMG_0001.JPG": {"size": 4}}
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            SUMMARY, MANIFEST = perform_incremental_sync(
+                CLIENT,
+                Path(TMPDIR),
+                PREVIOUS_MANIFEST,
+            )
+
+        self.assertEqual(SUMMARY.total_files, 0)
+        self.assertEqual(SUMMARY.transferred_files, 0)
+        self.assertEqual(SUMMARY.error_files, 1)
+        self.assertEqual(MANIFEST, PREVIOUS_MANIFEST)
+
+# --------------------------------------------------------------------------
+# This test confirms a remote listing failure is logged as an error so it
+# lands in the worker's own structured log, not only stderr.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_logs_listing_failure_as_error(self) -> None:
+        CLIENT = ListingFailureClient([])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            LOG_FILE = Path(TMPDIR) / "worker.log"
+
+            perform_incremental_sync(
+                CLIENT,
+                Path(TMPDIR),
+                {},
+                LOG_FILE=LOG_FILE,
+            )
+
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+            self.assertIn("[ERROR]", LOG_TEXT)
+            self.assertIn("Remote photo listing failed: iCloud listing timed out", LOG_TEXT)
+
+# --------------------------------------------------------------------------
+# This test confirms a listing failure never reaches the delete phase, so a
+# transient network error cannot be misread as "iCloud has zero files" and
+# wipe the local library when delete reconciliation is enabled.
+# --------------------------------------------------------------------------
+    def test_perform_incremental_sync_skips_delete_phase_on_listing_failure(self) -> None:
+        CLIENT = ListingFailureClient([])
+
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            TMPDIR_PATH = Path(TMPDIR)
+            SURVIVING_FILE = TMPDIR_PATH / "library/2026/03/14/IMG_0001.JPG"
+            SURVIVING_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SURVIVING_FILE.write_bytes(b"data")
+
+            with patch("app.syncer.delete_removed_local_paths") as DELETE_MOCK:
+                SUMMARY, _ = perform_incremental_sync(
+                    CLIENT,
+                    TMPDIR_PATH,
+                    {},
+                    BACKUP_DELETE_REMOVED=True,
+                )
+
+            DELETE_MOCK.assert_not_called()
+            self.assertEqual(SUMMARY.deleted_files, 0)
+            self.assertEqual(SUMMARY.deleted_directories, 0)
+            self.assertTrue(SURVIVING_FILE.exists())
 
 # --------------------------------------------------------------------------
 # This helper sets debug logging for syncer log assertions.
