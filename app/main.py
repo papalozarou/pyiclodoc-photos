@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from importlib import metadata as importlib_metadata
+from pathlib import Path
 import os
 import threading
+import traceback
 from typing import TextIO
 
 from app.auth_flow import attempt_auth
@@ -113,6 +115,7 @@ def main() -> int:
     BUILD_DETAIL = get_build_detail()
     HEARTBEAT_STOP_EVENT: threading.Event | None = None
     LOCK_HANDLE: TextIO | None = None
+    LOG_FILE: Path | None = None
     STOP_STATUS = "Worker process exited."
 
     try:
@@ -212,6 +215,16 @@ def main() -> int:
             LOG_FILE,
             BUILD_DETAIL,
         )
+    except Exception as ERROR:
+        if LOG_FILE is not None:
+            log_line(
+                LOG_FILE,
+                "error",
+                "Unhandled exception in worker main loop:\n" + traceback.format_exc(),
+            )
+
+        STOP_STATUS = f"Worker process crashed: {type(ERROR).__name__}: {ERROR}"
+        return 1
     finally:
         if CONFIG is not None:
             notify(
