@@ -1,16 +1,15 @@
 # ------------------------------------------------------------------------------
 # This Dockerfile defines the backup worker image for Compose-based deployments.
 #
-# The image uses a multi-stage build to separate dependency installation and
-# binary fetch steps from the final runtime stage. Runtime data is externalised
-# via mounted volumes for configuration, backup output, and logs.
+# The image uses a multi-stage build to separate dependency installation from
+# the final runtime stage. Runtime data is externalised via mounted volumes for
+# configuration, backup output, and logs.
 # ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
 # Pin Alpine image tag and digest for reproducible builds.
 # ------------------------------------------------------------------------------
 ARG ALP_VER
-ARG MCK_VER=1.3.0
 ARG ALPINE_IMAGE=alpine:${ALP_VER}
 
 FROM ${ALPINE_IMAGE} AS python-deps
@@ -34,14 +33,6 @@ WORKDIR /build
 COPY requirements.txt /build/requirements.txt
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r /build/requirements.txt
-
-# ------------------------------------------------------------------------------
-# Fetch architecture-specific microcheck toolbox binary used by healthcheck.
-#
-# N.B.
-# Pinning "MCK_VER" makes the build reproducible across environments.
-# ------------------------------------------------------------------------------
-FROM ghcr.io/tarampampam/microcheck:${MCK_VER} AS microcheck
 
 # ------------------------------------------------------------------------------
 # Build the final runtime image with only required runtime dependencies.
@@ -87,10 +78,9 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # ------------------------------------------------------------------------------
-# Copy runtime assets from previous build stages.
+# Copy runtime assets from the dependency build stage.
 # ------------------------------------------------------------------------------
 COPY --from=python-deps /opt/venv /opt/venv
-COPY --from=microcheck /bin/parallel /bin/parallel
 
 # ------------------------------------------------------------------------------
 # Copy worker application source code and operational scripts into the image.
@@ -103,7 +93,7 @@ COPY scripts/healthcheck.sh /app/scripts/healthcheck.sh
 # ------------------------------------------------------------------------------
 # Mark startup scripts as executable so entrypoint and launcher can run.
 # ------------------------------------------------------------------------------
-RUN chmod +x /app/scripts/entrypoint.sh /app/scripts/start.sh /bin/parallel
+RUN chmod +x /app/scripts/entrypoint.sh /app/scripts/start.sh
 
 # ------------------------------------------------------------------------------
 # Declare persistent mount points used by Compose volume bindings.

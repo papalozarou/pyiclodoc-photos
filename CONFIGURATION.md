@@ -48,7 +48,6 @@ These are shared by all services in the example stack.
 - `IMG_NAME`: image repository/name used for service image tags, with
   `:alpine-${ALP_VER}` appended in Compose.
 - `ALP_VER`: Alpine base image version used during Docker build.
-- `MCK_VER`: Microcheck image version used during Docker build.
 
 ## Service variables (`ALICE_*`, `BOB_*`)
 
