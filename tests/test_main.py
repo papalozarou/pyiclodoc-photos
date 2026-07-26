@@ -117,16 +117,59 @@ class TestMainEntrypoint(unittest.TestCase):
         self.assertEqual(BUILD_DETAIL["pyicloud_version"], "unknown")
 
 # --------------------------------------------------------------------------
-# This test confirms startup exceptions from config loading are not masked by
-# shutdown handling.
+# This test confirms a startup exception from config loading is caught rather
+# than crashing the process, and that shutdown handling is still skipped
+# because "CONFIG" never became available.
 # --------------------------------------------------------------------------
-    def test_main_preserves_load_config_failure_without_shutdown_notify(self) -> None:
+    def test_main_catches_load_config_failure_without_shutdown_notify(self) -> None:
         with patch("app.main.load_config", side_effect=RuntimeError("boom")):
             with patch("app.main.notify") as NOTIFY:
-                with self.assertRaisesRegex(RuntimeError, "boom"):
-                    main()
+                RESULT = main()
 
+        self.assertEqual(RESULT, 1)
         NOTIFY.assert_not_called()
+
+# --------------------------------------------------------------------------
+# This test confirms an unhandled exception raised deep in the run loop is
+# caught, logged with its traceback via "log_line", and does not crash the
+# process -- the top-level guard added as defense in depth alongside the
+# guarded listing call.
+# --------------------------------------------------------------------------
+    def test_main_catches_unhandled_runtime_exception_and_logs_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as TMPDIR:
+            CONFIG = self._create_config(Path(TMPDIR))
+            CLIENT = MagicMock()
+            HEARTBEAT_STOP_EVENT = MagicMock()
+            AUTH_STATE = AuthState("2026-03-15T10:00:00+00:00", False, False, "none")
+
+            with patch("app.main.load_config", return_value=CONFIG):
+                with patch("app.main.configure_keyring"):
+                    with patch("app.main.load_credentials", return_value=("", "")):
+                        with patch("app.main.start_heartbeat_updater", return_value=HEARTBEAT_STOP_EVENT):
+                            with patch("app.main.save_credentials"):
+                                with patch("app.main.ICloudDriveClient", return_value=CLIENT):
+                                    with patch("app.main.load_auth_state", return_value=AUTH_STATE):
+                                        with patch(
+                                            "app.main.attempt_auth",
+                                            return_value=(AUTH_STATE, True, "auth ok"),
+                                        ):
+                                            with patch(
+                                                "app.main.run_persistent_runtime",
+                                                side_effect=RuntimeError("unexpected crash"),
+                                            ):
+                                                with patch("app.main.notify") as NOTIFY:
+                                                    RESULT = main()
+
+            LOG_FILE = CONFIG.logs_dir / "pyiclodoc-photos-worker.log"
+            LOG_TEXT = LOG_FILE.read_text(encoding="utf-8")
+
+        self.assertEqual(RESULT, 1)
+        HEARTBEAT_STOP_EVENT.set.assert_called_once()
+        self.assertIn("[ERROR]", LOG_TEXT)
+        self.assertIn("Unhandled exception in worker main loop:", LOG_TEXT)
+        self.assertIn("RuntimeError: unexpected crash", LOG_TEXT)
+        STOP_MESSAGE = NOTIFY.call_args_list[-1].args[1]
+        self.assertIn("Worker process crashed: RuntimeError: unexpected crash", STOP_MESSAGE)
 
 # --------------------------------------------------------------------------
 # This test confirms main returns a validation error code and logs the
